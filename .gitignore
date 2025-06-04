@@ -109,7 +109,7 @@ venv.bak/
 
 # custom
 mmpose/.mim
-/models
+
 /data
 .vscode
 .idea
