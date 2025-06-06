@@ -7,8 +7,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-
+from models.models.stereoplus.headplus import AdaptiveAggregationModule
+from headplus import UnfoldConv
 def make_cost_volume(left, right, max_disp):
     cost_volume = torch.ones(
         (left.size(0), left.size(1), max_disp, left.size(2), left.size(3)),
@@ -21,8 +21,41 @@ def make_cost_volume(left, right, max_disp):
         cost_volume[:, :, d, :, d:] = left[:, :, :, d:] - right[:, :, :, :-d]
 
     return cost_volume
+def build_aanet_volume(left, right, max_disp):
+    """构建 cost volume：left * right 点乘（互相关）"""
+    B, C, H, W = left.shape
+    cost_volume = []
 
+    for d in range(max_disp):
+        if d > 0:
+            cost = left[:, :, :, d:] * right[:, :, :, :-d]
+            cost = F.pad(cost, (d, 0, 0, 0))
+        else:
+            cost = left * right
+        cost = torch.mean(cost, dim=1, keepdim=True)
+        cost_volume.append(cost)
 
+    cost_volume = torch.cat(cost_volume, dim=1)  # [B, D, H, W]
+    return cost_volume
+class CostAggregation2D(nn.Module):
+    def __init__(self, max_disp):
+        super().__init__()
+        self.max_disp = max_disp
+        self.encoder = nn.Sequential(
+            conv_3x3(max_disp, 64),
+            conv_3x3(64, 64),
+            conv_3x3(64, 64),
+        )
+        self.decoder = nn.Sequential(
+            conv_3x3(64, 32),
+            conv_3x3(32, 32),
+            nn.Conv2d(32, max_disp, 3, 1, 1)
+        )
+
+    def forward(self, x):  # x: [B, D, H, W]
+        x = self.encoder(x)
+        x = self.decoder(x)
+        return x  # [B, D, H, W]
 def conv_3x3(in_c, out_c, s=1, d=1):
     return nn.Sequential(
         nn.Conv2d(in_c, out_c, 3, s, d, dilation=d, bias=False),
@@ -105,7 +138,14 @@ class StereoNet(nn.Module):
             nn.ReLU(),
             nn.Conv3d(32, 1, 3, 1, 1),
         )
+        self.cost_filter_aanet = CostAggregation2D(self.max_disp)
         self.refine_layer = nn.ModuleList([RefineNet() for _ in range(self.k)])
+
+        self.cost_fusion = AdaptiveAggregationModule(
+            num_scales=3,  # 多尺度层数，例如 3
+            num_output_branches=1,
+            max_disp=self.max_disp  # 通常是低分辨率下的 disparity 上限
+        )
     def freeze_bn(self):
         for m in self.modules():
             if isinstance(m, nn.BatchNorm2d):
@@ -144,19 +184,33 @@ class StereoNet(nn.Module):
         # Use the main output for cost volume computation
         lf = lf_features["out"]
         rf = rf_features["out"]
+        # Compute cost volume
+        # # (1,32,24,68,120) self.max_disp=24
+        # cost_volume = make_cost_volume(lf, rf, self.max_disp)
+        # # cost_volume=(1,32,24,68,120)
+        # cost_volume = self.cost_filter(cost_volume).squeeze(1)
+        # x = F.softmax(cost_volume, dim=1)
+        # d = torch.arange(0, self.max_disp, device=x.device, dtype=x.dtype)
+        # x = torch.sum(x * d.view(1, -1, 1, 1), dim=1, keepdim=True)
 
-        # (1,32,24,68,120) self.max_disp=24
-        cost_volume = make_cost_volume(lf, rf, self.max_disp)
-        # cost_volume=(1,32,24,68,120)
-        cost_volume = self.cost_filter(cost_volume).squeeze(1)
+        # Compute cost volume aanet style
+        cost_volume = build_aanet_volume(lf, rf, self.max_disp)  # [B, D, H, W]
 
-        x = F.softmax(cost_volume, dim=1)
-        d = torch.arange(0, self.max_disp, device=x.device, dtype=x.dtype)
-        x = torch.sum(x * d.view(1, -1, 1, 1), dim=1, keepdim=True)# [B, 1, H, W]
+        # 2D aggregation
+        # 对 pyramid volume 使用聚合
+        volumes = [cost_volume_lowres, cost_volume_midres, cost_volume_highres]
+        fused_volumes = self.cost_fusion(volumes)
+        final_volume = fused_volumes[0]  # 最终结果
+
+        # Disparity regression
+        prob_volume = F.softmax(cost_volume, dim=1)
+        disp_probs = F.softmax(final_volume, dim=1)
+        disp_values = torch.arange(0, final_volume.shape[1], device=final_volume.device).view(1, -1, 1, 1)
+        disp = torch.sum(disp_probs * disp_values, dim=1, keepdim=True)  # [B, 1, H, W]
 
         multi_scale = []
         for refine in self.refine_layer:
-            x = refine(x, left_img)
+            x = refine(disp, left_img)
             scale = left_img.size(3) / x.size(3)
             full_res = F.interpolate(x * scale, left_img.shape[2:])[:, :, :h, :w]
             multi_scale.append(full_res)

@@ -27,15 +27,31 @@ def make_cost_volume_aanet(left_feat, right_feat, max_disp):
 
     for d in range(max_disp):
         if d > 0:
-            cost = left_feat[:, :, :, d:] * right_feat[:, :, :, :-d]
-            cost = F.pad(cost, (d, 0, 0, 0))  # pad disparity dimension
+            cost = left_feat[:, :, :, d:] * right_feat[:, :, :, :-d]  # shape [B, C, H, W-d]
+            cost = F.pad(cost, (d, 0, 0, 0))  # pad left d
         else:
             cost = left_feat * right_feat
+
+        # 确保最终宽度一致（W），不论之前怎么裁剪和 pad
+        if cost.shape[-1] != W:
+            cost = F.pad(cost, (0, W - cost.shape[-1], 0, 0))
+
         cost_volume.append(cost)
 
-    cost_volume = torch.stack(cost_volume, dim=1)  # Shape: [B, D, C, H, W]
-    cost_volume = cost_volume.mean(2)  # Aggregating over channel -> [B, D, H, W]
+    cost_volume = torch.stack(cost_volume, dim=1)  # [B, D, C, H, W]
+    cost_volume = cost_volume.mean(2)  # reduce over channel → [B, D, H, W]
     return cost_volume
+# 修改make_cost_volume_aanet（返回绝对值差异）
+def make_cost_volume_aanet2(left, right, max_disp):
+    B, C, H, W = left.shape
+    cost = torch.zeros((B, max_disp, H, W), device=left.device)
+    for d in range(max_disp):
+        if d > 0:
+            cost[:, d, :, d:] = torch.abs(left[:, :, :, d:] - right[:, :, :, :-d]).mean(1)
+        else:
+            cost[:, 0] = torch.abs(left - right).mean(1)
+    return cost
+
 class CostAggregation2D(nn.Module):
     def __init__(self, max_disp):
         super().__init__()
@@ -161,7 +177,48 @@ class StereoNet(nn.Module):
             "s32": feat5,
             "out": feat5  # Main output for backward compatibility
         }
-        
+    def compute_cost_volume(self, lf, rf, max_disp):
+
+        # Compute cost volume
+        # (1,32,24,68,120) self.max_disp=24
+        cost_volume = make_cost_volume(lf, rf, self.max_disp)
+        # cost_volume=(1,32,24,68,120)
+        cost_volume = self.cost_filter(cost_volume).squeeze(1)
+        x = F.softmax(cost_volume, dim=1)
+        d = torch.arange(0, self.max_disp, device=x.device, dtype=x.dtype)
+        x = torch.sum(x * d.view(1, -1, 1, 1), dim=1, keepdim=True)
+        return x
+    def compute_cost_volume1(self, lf, rf, max_disp):
+        # Compute cost volume aanet style
+        cost_volume = make_cost_volume_aanet(lf, rf, self.max_disp)  # [B, D, H, W]
+        # 2D aggregation
+        cost_volume = self.cost_filter_aanet(cost_volume)  # cost_filter now uses 2D conv
+        # Disparity regression
+        prob_volume = F.softmax(cost_volume, dim=1)
+        disp_values = torch.arange(0, self.max_disp, device=prob_volume.device, dtype=prob_volume.dtype)
+        disp = torch.sum(prob_volume * disp_values.view(1, -1, 1, 1), dim=1, keepdim=True)  # [B, 1, H, W]
+        return disp
+    def compute_cost_volume2(self, lf, rf, max_disp):
+        # 修改后的forward片段
+        cost_volume = make_cost_volume_aanet(lf, rf, max_disp)  # [B, D, H, W]
+
+        # 2D聚合后转为差异度量（关键修改）
+        cost_volume = self.cost_filter_aanet(cost_volume)  # [B, D, H, W]
+        cost_volume = -cost_volume  # 将相似度转换为差异度量
+
+        # 视差回归
+        prob_volume = F.softmax(cost_volume, dim=1)  # 现在差异越小概率越大
+        disp_values = torch.arange(0, self.max_disp, device=prob_volume.device)
+        disp = torch.sum(prob_volume * disp_values.view(1, -1, 1, 1), dim=1, keepdim=True)
+        return disp
+    def compute_cost_volume3(self, lf, rf, max_disp):
+        # forward保持不变
+        cost_volume = make_cost_volume_aanet2(lf, rf, max_disp)
+        cost_volume = self.cost_filter_aanet(cost_volume)
+        prob_volume = F.softmax(-cost_volume, dim=1)  # 差异越小概率越大
+        disp_values = torch.arange(0, self.max_disp, device=prob_volume.device)
+        disp = torch.sum(prob_volume * disp_values.view(1, -1, 1, 1), dim=1, keepdim=True)
+        return disp
     def forward(self, left_img, right_img,iters=None,test_mode=False):
         n, c, h, w = left_img.size()
         w_pad = (self.align - (w % self.align)) % self.align
@@ -175,27 +232,11 @@ class StereoNet(nn.Module):
         rf_features = self.feature_extractor(right_img)
         
         # Use the main output for cost volume computation
-        lf = lf_features["out"]
-        rf = rf_features["out"]
-        # Compute cost volume
-        # # (1,32,24,68,120) self.max_disp=24
-        # cost_volume = make_cost_volume(lf, rf, self.max_disp)
-        # # cost_volume=(1,32,24,68,120)
-        # cost_volume = self.cost_filter(cost_volume).squeeze(1)
-        # x = F.softmax(cost_volume, dim=1)
-        # d = torch.arange(0, self.max_disp, device=x.device, dtype=x.dtype)
-        # x = torch.sum(x * d.view(1, -1, 1, 1), dim=1, keepdim=True)
+        lf = lf_features["s8"]
+        rf = rf_features["s8"]
 
-        # Compute cost volume aanet style
-        cost_volume = make_cost_volume_aanet(lf, rf, self.max_disp)  # [B, D, H, W]
+        disp = self.compute_cost_volume3(lf, rf, self.max_disp)
 
-        # 2D aggregation
-        cost_volume = self.cost_filter_aanet(cost_volume)  # cost_filter now uses 2D conv
-
-        # Disparity regression
-        prob_volume = F.softmax(cost_volume, dim=1)
-        disp_values = torch.arange(0, self.max_disp, device=prob_volume.device, dtype=prob_volume.dtype)
-        disp = torch.sum(prob_volume * disp_values.view(1, -1, 1, 1), dim=1, keepdim=True)  # [B, 1, H, W]
 
         multi_scale = []
         for refine in self.refine_layer:
