@@ -85,7 +85,7 @@ def convert_onnx_to_trt(onnx_path, fp16=True):
 
 
 # 运行转换
-onnx_models = ["models/models/stereonet/ActiveStereoNet.onnx"]
+onnx_models = ["models/models/stereoplus/stereoplus_aanet.onnx"]
 for model in onnx_models:
     if os.path.exists(model):
         convert_onnx_to_trt(model, fp16=True)

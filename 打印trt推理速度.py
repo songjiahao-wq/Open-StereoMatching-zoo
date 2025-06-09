@@ -142,5 +142,5 @@ class trt_infer_time:
 
 
 # 运行速度测量函数
-trt_infer_time_instance = trt_infer_time(engine_file_path=r"models/models/stereonet/ActiveStereoNetfp16.engine")
+trt_infer_time_instance = trt_infer_time(engine_file_path=r"models/models/stereoplus/stereoplus_aanetfp16.engine")
 trt_infer_time_instance.measure_speed()

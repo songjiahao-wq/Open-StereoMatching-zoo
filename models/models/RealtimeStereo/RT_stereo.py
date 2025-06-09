@@ -237,7 +237,11 @@ class RTStereoNet(nn.Module):
                 disp_up = F.upsample(pred_low_res, (img_size[2], img_size[3]), mode='bilinear')
                 pred.append(disp_up+pred[scale-1]) #
         if self.training:
-            return pred[0],pred[1],pred[2]
+            return {
+                "disp": pred[-1],
+                "multi_scale": pred,
+                "features": feats_l  # Return multi-scale features
+            }
         else:
             return pred[-1]
 
@@ -269,4 +273,15 @@ if __name__ == "__main__":
         "{:.4f} MACs(G)\t{:.4f} Params(M)".format(
             total_ops / (1000 ** 3), total_params / (1000 ** 2)
         )
+    )
+    torch.onnx.export(
+        model,
+        (left, right),
+        "RTStereoNet.onnx",
+        export_params=True,  # 存储训练参数
+        opset_version=16,  # ONNX opset 版本
+        do_constant_folding=True,  # 是否进行常量折叠优化
+        input_names=["left", "right"],  # 输入名称
+        output_names=["output"],  # 输出名称
+        dynamic_axes=None  # 动态维度（可选）
     )
