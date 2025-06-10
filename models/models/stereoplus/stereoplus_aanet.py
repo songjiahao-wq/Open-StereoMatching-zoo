@@ -204,6 +204,21 @@ class StereoNet(nn.Module):
         self.conv5 = nn.Sequential(conv_3x3(32, 32, 2), ResBlock(32))  # 1/32
         self.last_conv = nn.Conv2d(32, 32, 3, 1, 1)
 
+        self.cost_filter = nn.Sequential(
+            nn.Conv3d(32, 32, 3, 1, 1),
+            nn.BatchNorm3d(32),
+            nn.ReLU(),
+            nn.Conv3d(32, 32, 3, 1, 1),
+            nn.BatchNorm3d(32),
+            nn.ReLU(),
+            nn.Conv3d(32, 32, 3, 1, 1),
+            nn.BatchNorm3d(32),
+            nn.ReLU(),
+            nn.Conv3d(32, 32, 3, 1, 1),
+            nn.BatchNorm3d(32),
+            nn.ReLU(),
+            nn.Conv3d(32, 1, 3, 1, 1),
+        )
         self.cost_filter_aanetori = CostAggregation2D(self.max_disp)
         # self.cost_filter_aanet = AdaptiveAggregation2D(kernel_size=3)
 
@@ -283,18 +298,18 @@ class StereoNet(nn.Module):
     def compute_cost_volume3(self, lf, rf, max_disp):
         # forward保持不变
         cost_volume = make_cost_volume_abs_diff(lf, rf, max_disp)
-        cost_volume = self.cost_filter_aanetori(cost_volume)
+        cost_volume = self.cost_filter_aanet(cost_volume)
         prob_volume = F.softmax(-cost_volume, dim=1)  # 差异越小概率越大
         disp_values = torch.arange(0, self.max_disp, device=prob_volume.device)
         disp = torch.sum(prob_volume * disp_values.view(1, -1, 1, 1), dim=1, keepdim=True)
         return disp
+
     def compute_cost_volume4(self, lf, rf, max_disp):
         # forward保持不变
         cost_volume = make_cost_volume_abs_diff(lf, rf, max_disp)
         cost_volume = self.cost_filter_aanetori(cost_volume)
         temperature = 0.5
         prob_volume = F.softmax(-cost_volume / temperature, dim=1)
-
         disp_values = torch.arange(0, self.max_disp, device=prob_volume.device).view(1, -1, 1, 1)
         disp = torch.sum(prob_volume * disp_values, dim=1, keepdim=True)
         return disp
@@ -337,8 +352,8 @@ class StereoNet(nn.Module):
 if __name__ == "__main__":
     from thop import profile
 
-    left = torch.rand(1, 3, 480, 640)
-    right = torch.rand(1, 3, 480, 640)
+    left = torch.rand(1, 3, 544, 960)
+    right = torch.rand(1, 3, 544, 960)
     model = StereoNet(cfg=None)
 
     print(model(left, right)["disp"].size())
@@ -354,15 +369,4 @@ if __name__ == "__main__":
         "{:.4f} MACs(G)\t{:.4f} Params(M)".format(
             total_ops / (1000 ** 3), total_params / (1000 ** 2)
         )
-    )
-    torch.onnx.export(
-        model,
-        (left, right),
-        "stereoplus_aanet.onnx",
-        export_params=True,  # 存储训练参数
-        opset_version=16,  # ONNX opset 版本
-        do_constant_folding=True,  # 是否进行常量折叠优化
-        input_names=["left", "right"],  # 输入名称
-        output_names=["output"],  # 输出名称
-        dynamic_axes=None  # 动态维度（可选）
     )

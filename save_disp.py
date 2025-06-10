@@ -1,13 +1,13 @@
 import sys
-sys.path.append('../core')
+sys.path.append('core')
 import argparse
 import glob
 import numpy as np
 import torch
 from tqdm import tqdm
 from pathlib import Path
-from monster import Monster
-from utils.utils import InputPadder
+from models.models.stereoplus.stereoplus_aanet import StereoNet
+from core.utils.utils import InputPadder
 from PIL import Image
 from matplotlib import pyplot as plt
 import os
@@ -52,9 +52,20 @@ def load_image(imfile):
     img = np.array(Image.open(imfile)).astype(np.uint8)
     img = torch.from_numpy(img).permute(2, 0, 1).float()
     return img[None].to(DEVICE)
+def visualize_disp(disp, colormap=cv2.COLORMAP_MAGMA):
+    norm = ((disp - disp.min()) / (disp.max() - disp.min()) * 255).astype(np.uint8)
+    depth_colormap = cv2.applyColorMap(norm, cv2.COLORMAP_PLASMA)
+    # # 归一化到 0-255
+    # depth_min = 0.3376  # np.min(depth_filtered)
+    # depth_max = 20.0000  # np.max(depth_filtered)
+    # depth_norm = (depth_filtered - depth_min) / (depth_max - depth_min)  # 归一化到 0-1
+    # depth_vis = (depth_norm * 255).astype(np.uint8)  # 转换为 0-255 范围
 
+    # # 伪彩色映射
+    # depth_colormap = cv2.applyColorMap(depth_vis, colormap)
+    return depth_colormap
 def demo(args):
-    model = torch.nn.DataParallel(Monster(args), device_ids=[0])
+    model = torch.nn.DataParallel(StereoNet(args), device_ids=[0])
 
     assert os.path.exists(args.restore_ckpt)
     checkpoint = torch.load(args.restore_ckpt)
@@ -87,16 +98,31 @@ def demo(args):
             image2 = load_image(imfile2)
             padder = InputPadder(image1.shape, divis_by=32)
             image1, image2 = padder.pad(image1, image2)
+
+            torch.onnx.export(
+                model,
+                (torch.zeros(1,3,480,640).cuda(), torch.zeros(1,3,480,640).cuda()),
+                "stereoplus_aanet.onnx",
+                opset_version=16,  # ONNX opset 版本
+                do_constant_folding=True,  # 是否进行常量折叠优化
+                input_names=["left", "right"],  # 输入名称
+                output_names=["output"],  # 输出名称
+                dynamic_axes=None  # 动态维度（可选）
+            )
+
+
+
             start_time = time.time()
-            disp = model(image1, image2, iters=args.valid_iters, test_mode=True)
+            disp = model(image1, image2, None, test_mode=True)
 
             end_time = time.time()
             inference_time = end_time - start_time
             print(f"Inference time: {inference_time:.4f} seconds")
             disp = padder.unpad(disp)
+            disp = visualize_disp(disp.cpu().numpy().squeeze())
             file_stem = os.path.join(output_directory, imfile1.split('/')[-1])
-            disp = disp.cpu().numpy().squeeze()
-            disp = np.round(disp * 256).astype(np.uint16)
+            # disp = disp.cpu().numpy().squeeze()
+            # disp = np.round(disp * 256).astype(np.uint16)
             skimage.io.imsave(file_stem, disp)
             if args.save_numpy:
                 np.save(output_directory / f"{file_stem}.npy", disp.squeeze())
@@ -104,28 +130,14 @@ def demo(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--restore_ckpt', help="restore checkpoint", default="/data2/cjd/mono_fusion/checkpoints/kitti.pth")
+    parser.add_argument('--restore_ckpt', help="restore checkpoint", default="195000.pth")
 
     parser.add_argument('--save_numpy', action='store_true', help='save output as numpy arrays')
-    # parser.add_argument('-l', '--left_imgs', help="path to all first (left) frames", default="/data2/cjd/StereoDatasets/kitti//2015/testing/image_2/*_10.png")
-    # parser.add_argument('-r', '--right_imgs', help="path to all second (right) frames", default="/data2/cjd/StereoDatasets/kitti/2015/testing/image_3/*_10.png")
-    parser.add_argument('-l', '--left_imgs', help="path to all first (left) frames", default="/data2/cjd/StereoDatasets/kitti/2012/testing/colored_0/*_10.png")
-    parser.add_argument('-r', '--right_imgs', help="path to all second (right) frames", default="/data2/cjd/StereoDatasets/kitti/2012/testing/colored_1/*_10.png")
+    parser.add_argument('-l', '--left_imgs', help="path to all first (left) frames", default="./data/111/im0.png")
+    parser.add_argument('-r', '--right_imgs', help="path to all second (right) frames", default="./data/111/im1.png")
 
     parser.add_argument('--output_directory', help="directory to save output", default="kitti_2012")
-    parser.add_argument('--mixed_precision', action='store_true', help='use mixed precision')
-    parser.add_argument('--valid_iters', type=int, default=32, help='number of flow-field updates during forward pass')
-    parser.add_argument('--encoder', type=str, default='vitl', choices=['vits', 'vitb', 'vitl', 'vitg'])
 
-    # Architecture choices
-    parser.add_argument('--hidden_dims', nargs='+', type=int, default=[128]*3, help="hidden state and context dimensions")
-    parser.add_argument('--corr_implementation', choices=["reg", "alt", "reg_cuda", "alt_cuda"], default="reg", help="correlation volume implementation")
-    parser.add_argument('--shared_backbone', action='store_true', help="use a single backbone for the context and feature encoders")
-    parser.add_argument('--corr_levels', type=int, default=2, help="number of levels in the correlation pyramid")
-    parser.add_argument('--corr_radius', type=int, default=4, help="width of the correlation pyramid")
-    parser.add_argument('--n_downsample', type=int, default=2, help="resolution of the disparity field (1/2^K)")
-    parser.add_argument('--slow_fast_gru', action='store_true', help="iterate the low-res GRUs more frequently")
-    parser.add_argument('--n_gru_layers', type=int, default=3, help="number of hidden GRU levels")
     parser.add_argument('--max_disp', type=int, default=192, help="max disp of geometry encoding volume")
     
     args = parser.parse_args()
