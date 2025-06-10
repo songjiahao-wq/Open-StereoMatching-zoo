@@ -343,16 +343,15 @@ if __name__ == "__main__":
     from thop import profile
 
     left = torch.rand(1, 3, 544, 960)
-    right = torch.rand(1, 3, 544, 960)
     model = StereoNet(cfg=None)
 
-    print(model(left, right)["disp"].size())
+    print(model(left, left)["disp"].size())
 
     total_ops, total_params = profile(
         model,
         (
             left,
-            right,
+            left,
         ),
     )
     print(

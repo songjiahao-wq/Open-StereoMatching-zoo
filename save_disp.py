@@ -99,16 +99,16 @@ def demo(args):
             padder = InputPadder(image1.shape, divis_by=32)
             image1, image2 = padder.pad(image1, image2)
 
-            torch.onnx.export(
-                model,
-                (torch.zeros(1,3,480,640).cuda(), torch.zeros(1,3,480,640).cuda()),
-                "stereoplus_aanet.onnx",
-                opset_version=16,  # ONNX opset 版本
-                do_constant_folding=True,  # 是否进行常量折叠优化
-                input_names=["left", "right"],  # 输入名称
-                output_names=["output"],  # 输出名称
-                dynamic_axes=None  # 动态维度（可选）
-            )
+            # torch.onnx.export(
+            #     model,
+            #     (torch.zeros(1,3,480,640).cuda(), torch.zeros(1,3,480,640).cuda()),
+            #     "stereoplus_aanet.onnx",
+            #     opset_version=16,  # ONNX opset 版本
+            #     do_constant_folding=True,  # 是否进行常量折叠优化
+            #     input_names=["left", "right"],  # 输入名称
+            #     output_names=["output"],  # 输出名称
+            #     dynamic_axes=None  # 动态维度（可选）
+            # )
 
 
 
@@ -120,6 +120,7 @@ def demo(args):
             print(f"Inference time: {inference_time:.4f} seconds")
             disp = padder.unpad(disp)
             disp = visualize_disp(disp.cpu().numpy().squeeze())
+            print(np.max(disp), np.min(disp), disp.shape)
             file_stem = os.path.join(output_directory, imfile1.split('/')[-1])
             # disp = disp.cpu().numpy().squeeze()
             # disp = np.round(disp * 256).astype(np.uint16)
@@ -133,8 +134,8 @@ if __name__ == '__main__':
     parser.add_argument('--restore_ckpt', help="restore checkpoint", default="195000.pth")
 
     parser.add_argument('--save_numpy', action='store_true', help='save output as numpy arrays')
-    parser.add_argument('-l', '--left_imgs', help="path to all first (left) frames", default="./data/111/im0.png")
-    parser.add_argument('-r', '--right_imgs', help="path to all second (right) frames", default="./data/111/im1.png")
+    parser.add_argument('-l', '--left_imgs', help="path to all first (left) frames", default="./data/mid/im0.png")
+    parser.add_argument('-r', '--right_imgs', help="path to all second (right) frames", default="./data/mid/im1.png")
 
     parser.add_argument('--output_directory', help="directory to save output", default="kitti_2012")
 

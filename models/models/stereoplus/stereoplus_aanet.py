@@ -298,11 +298,12 @@ class StereoNet(nn.Module):
     def compute_cost_volume3(self, lf, rf, max_disp):
         # forward保持不变
         cost_volume = make_cost_volume_abs_diff(lf, rf, max_disp)
-        cost_volume = self.cost_filter_aanet(cost_volume)
+        cost_volume = self.cost_filter_aanetori(cost_volume)
         prob_volume = F.softmax(-cost_volume, dim=1)  # 差异越小概率越大
         disp_values = torch.arange(0, self.max_disp, device=prob_volume.device)
         disp = torch.sum(prob_volume * disp_values.view(1, -1, 1, 1), dim=1, keepdim=True)
         return disp
+
 
     def forward(self, left_img, right_img, iters=None, test_mode=False):
         n, c, h, w = left_img.size()
@@ -336,6 +337,8 @@ class StereoNet(nn.Module):
             }
         else:
             return multi_scale[-1]
+
+
 
 if __name__ == "__main__":
     from thop import profile

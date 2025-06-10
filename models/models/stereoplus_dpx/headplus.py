@@ -38,6 +38,7 @@ class DeConvResModule(nn.Module):
                 out_channels,
                 k=kernel,
                 s=2,
+                p=1,
                 act=nn.ReLU(inplace=True),
 
             ),
@@ -429,14 +430,15 @@ class StereoNetHeadPlus(nn.Module):
         )
 
         # 你自己实现或保持不变
-        self.spx_4 = DeConvResModule(hidden_dim, hidden_dim, bn_kwargs)
-        self.spx_2 = DeConvResModule(hidden_dim, hidden_dim, bn_kwargs)
+        self.spx_4 = DeConvResModule(hidden_dim, hidden_dim)
+        self.spx_2 = DeConvResModule(hidden_dim, hidden_dim)
 
         self.spx = ConvTranspose(
             hidden_dim,
             4,
             k=4,
             s=2,
+            p=1,
             act=nn.ReLU(inplace=True),
         )
 
@@ -464,7 +466,7 @@ class StereoNetHeadPlus(nn.Module):
         )
 
         # 量化去掉
-        # self.unfold = UnfoldConv()
+        self.unfold = UnfoldConv()
         # self.dequant = DeQuantStub()
 
     def get_l_img(self, img: torch.Tensor, B: int) -> torch.Tensor:
@@ -522,9 +524,7 @@ class StereoNetHeadPlus(nn.Module):
         pred0 = self.softmax(cost0)
         pred0 = self.dis_mul(pred0)
         pred0 = self.dis_sum(pred0)
-
-        # unfold相关需要自己实现或者用普通tensor操作代替
-        # pred0_unfold = self.unfold(pred0)
+        pred0_unfold = self.unfold(pred0)
 
         B = features_inputs[0].shape[0]
 
@@ -538,7 +538,7 @@ class StereoNetHeadPlus(nn.Module):
         spx_pred = self.spx_conv3x3(spx_pred)
         spx_pred = self.softmax2(spx_pred)
 
-        return pred0, None, spx_pred  # unfold暂时设为None
+        return pred0, pred0_unfold, spx_pred  # unfold暂时设为None
 
 if __name__ == '__main__':
     # 初始化模型
@@ -550,16 +550,20 @@ if __name__ == '__main__':
         num_costvolume=3,
         num_fusion=6,
         hidden_dim=16,
-        in_channels=[16, 96, 64, 16, 16]  # 这里根据你的特征通道数设置，最后两个16是示例，可根据代码修改
+        in_channels=[32, 32, 16, 16, 16]  # 这里根据你的特征通道数设置，最后两个16是示例，可根据代码修改
     )
     model.eval()  # 设为eval模式
-
+    B = 4  # 假设batch size为4
     # 构造三层特征输入
-    feat1 = torch.randn(2, 16, 17, 30)  # 最小分辨率
-    feat2 = torch.randn(2, 96, 34, 60)
-    feat3 = torch.randn(2, 64, 68, 120)  # 最大分辨率
+    feat1 = torch.randn(B, 32, 272, 480)  # 最大分辨率
+    feat2 = torch.randn(B, 32, 136, 240)
+    feat3 = torch.randn(B, 16, 68, 120)
+    feat4 = torch.randn(B, 16, 34, 60)
+    feat5 = torch.randn(B, 16, 17, 30)  # 最小分辨率
 
-    inputs = [feat1, feat2, feat3]
+
+
+    inputs = [feat1, feat2, feat3, feat4, feat5]
 
     # 运行前向
     with torch.no_grad():
