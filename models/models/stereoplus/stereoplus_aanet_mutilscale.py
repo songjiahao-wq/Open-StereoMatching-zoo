@@ -7,7 +7,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+from typing import List, Union
 
 def make_cost_volume(left, right, max_disp):
     cost_volume = torch.ones(
@@ -188,7 +188,38 @@ class RefineNet(nn.Module):
         x = self.conv0(x)
         return F.relu(disp + x)
 
+class AdaptiveAggregationModule(nn.Module):
+    def __init__(self, in_channels_list):
+        super().__init__()
+        self.convs = nn.ModuleList([
+            nn.Sequential(
+                nn.Conv2d(c, 32, kernel_size=1),
+                nn.ReLU(inplace=True)
+            ) for c in in_channels_list
+        ])
+        self.weight_layer = nn.Sequential(
+            nn.Conv2d(32 * len(in_channels_list), len(in_channels_list), kernel_size=1),
+            nn.Softmax(dim=1)
+        )
 
+    def forward(self, cost_volumes):
+        # 每个 cost volume shape: [B, D, H, W] -> reshape 为 [B*D, 1, H, W]
+        # reshaped = [cv.view(-1, 1, *cv.shape[2:]) for cv in cost_volumes]
+
+        projected = [conv(x) for conv, x in zip(self.convs, cost_volumes)]  # 每个变成 [BD, 32, H, W]
+
+        fused = torch.cat(projected, dim=1)  # [BD, 32 * N, H, W]
+        weights = self.weight_layer(fused)   # [BD, N, H, W]
+
+        # 权重分配到原 cost volume 上
+        weights = weights.unsqueeze(2)  # [BD, N, 1, H, W]
+        cost_stack = torch.stack(cost_volumes, dim=1)  # [BD, N, 1, H, W]
+        fused_cost = (weights * cost_stack).sum(dim=1)  # [BD, 1, H, W]
+
+        # reshape 回 [B, D, H, W]
+        B, D = cost_volumes[0].shape[:2]
+        fused_cost = fused_cost.view(B, D, *cost_volumes[0].shape[2:])
+        return fused_cost
 class StereoNet(nn.Module):
     def __init__(self, cfg):
         super().__init__()
@@ -220,10 +251,13 @@ class StereoNet(nn.Module):
             nn.Conv3d(32, 1, 3, 1, 1),
         )
         self.cost_filter_aanetori = CostAggregation2D(self.max_disp)
-        # self.cost_filter_aanet = AdaptiveAggregation2D(kernel_size=3)
+        self.cost_filter_aanet = AdaptiveAggregation2D(kernel_size=3)
 
         self.refine_layer = nn.ModuleList([RefineNet() for _ in range(self.k)])
 
+        self.cost_fusion = AdaptiveAggregationModule([24,24,24])  # s8, s16, s32
+        self.conv1_1x1 = nn.Conv2d(12, 24, 1)
+        self.conv2_1x1 = nn.Conv2d(6, 24, 1)
     def freeze_bn(self):
         for m in self.modules():
             if isinstance(m, nn.BatchNorm2d):
@@ -248,62 +282,6 @@ class StereoNet(nn.Module):
             "out": feat5  # Main output for backward compatibility
         }
 
-    def compute_cost_volume(self, lf, rf, max_disp):
-
-        # Compute cost volume
-        # (1,32,24,68,120) self.max_disp=24
-        cost_volume = make_cost_volume(lf, rf, self.max_disp)
-        # cost_volume=(1,32,24,68,120)
-        cost_volume = self.cost_filter(cost_volume).squeeze(1)
-        x = F.softmax(cost_volume, dim=1)
-        d = torch.arange(0, self.max_disp, device=x.device, dtype=x.dtype)
-        x = torch.sum(x * d.view(1, -1, 1, 1), dim=1, keepdim=True)
-        return x
-
-    def compute_cost_volume1(self, lf, rf, max_disp):
-        # 1. 构建 AANet 风格的相似度 cost volume（B, D, H, W）
-        cost_volume = make_cost_volume_aanet(lf, rf, max_disp)
-
-        # 2. 归一化 cost volume（均值 0，方差 1）或 min-max 缩放
-        cost_volume = cost_volume - cost_volume.mean(dim=1, keepdim=True)
-
-        # 3. 取负号 → 相似度 → 差异度（softmax 会更偏向相似度大的）
-        cost_volume = -cost_volume
-
-        # 4. 进入 2D aggregation 模块（CostAggregation2D）
-        cost_volume = self.cost_filter_aanetori(cost_volume)
-        cost_volume = self.cost_filter_aanet(cost_volume)
-
-        # 5. softmax + 视差回归
-        prob_volume = F.softmax(cost_volume, dim=1)
-        disp_values = torch.arange(0, self.max_disp, device=prob_volume.device, dtype=prob_volume.dtype)
-        disp = torch.sum(prob_volume * disp_values.view(1, -1, 1, 1), dim=1, keepdim=True)  # [B, 1, H, W]
-
-        return disp
-
-    def compute_cost_volume2(self, lf, rf, max_disp):
-        # 修改后的forward片段
-        cost_volume = make_cost_volume_aanet(lf, rf, max_disp)  # [B, D, H, W]
-
-        # 2D聚合后转为差异度量（关键修改）
-        cost_volume = self.cost_filter_aanet(cost_volume)  # [B, D, H, W]
-        cost_volume = -cost_volume  # 将相似度转换为差异度量
-
-        # 视差回归
-        prob_volume = F.softmax(cost_volume, dim=1)  # 现在差异越小概率越大
-        disp_values = torch.arange(0, self.max_disp, device=prob_volume.device)
-        disp = torch.sum(prob_volume * disp_values.view(1, -1, 1, 1), dim=1, keepdim=True)
-        return disp
-
-    def compute_cost_volume3(self, lf, rf, max_disp):
-        # forward保持不变
-        cost_volume = make_cost_volume_abs_diff(lf, rf, max_disp)
-        cost_volume = self.cost_filter_aanet(cost_volume)
-        prob_volume = F.softmax(-cost_volume, dim=1)  # 差异越小概率越大
-        disp_values = torch.arange(0, self.max_disp, device=prob_volume.device)
-        disp = torch.sum(prob_volume * disp_values.view(1, -1, 1, 1), dim=1, keepdim=True)
-        return disp
-
     def forward(self, left_img, right_img, iters=None, test_mode=False):
         n, c, h, w = left_img.size()
         w_pad = (self.align - (w % self.align)) % self.align
@@ -317,10 +295,34 @@ class StereoNet(nn.Module):
         rf_features = self.feature_extractor(right_img)
 
         # Use the main output for cost volume computation
-        lf = lf_features["s8"]
-        rf = rf_features["s8"]
+        scales = ["s8", "s16", "s32"]
+        cost_volumes = []
 
-        disp = self.compute_cost_volume3(lf, rf, self.max_disp)
+        for scale in scales:
+            scale_val = int(scale[1:])
+            assert scale_val >= 8, f"Invalid scale: {scale}"  # 确保合法
+            scale_factor = scale_val // 1
+            max_disp_scale = 192 // scale_factor
+
+            lf = lf_features[scale]
+            rf = rf_features[scale]
+            cost = make_cost_volume_aanet(lf, rf, max_disp_scale)  # [B, D, H, W]
+            cost = -cost
+            cost = self.cost_filter_aanet(cost)
+            cost_volumes.append(cost)
+
+        # 将所有 cost volume 上采样到 s8 分辨率
+        target_shape = cost_volumes[0].shape[-2:]  # s8 分辨率
+        cost_volumes = [F.interpolate(cv, target_shape, mode='bilinear', align_corners=False) for cv in cost_volumes]
+
+        # 融合所有代价体（简单平均或使用可学习融合模块）
+        cost_volumes[1] = self.conv1_1x1(cost_volumes[1])  # s16 -> s8
+        cost_volumes[2] = self.conv2_1x1(cost_volumes[2]) # s32 -> s8
+        fused_cost_volume = self.cost_fusion(cost_volumes)  # [B, D, H, W]
+
+        prob_volume = F.softmax(fused_cost_volume, dim=1)
+        disp_values = torch.arange(0, self.max_disp, device=prob_volume.device).view(1, -1, 1, 1)
+        disp = torch.sum(prob_volume * disp_values, dim=1, keepdim=True)
 
         multi_scale = []
         for refine in self.refine_layer:

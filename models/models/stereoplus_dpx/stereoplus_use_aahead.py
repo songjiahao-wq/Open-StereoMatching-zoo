@@ -7,8 +7,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from models.models.stereoplus.headplus import AdaptiveAggregationModule
-from headplus import UnfoldConv
+from models.models.stereoplus_dpx.headplus import AdaptiveAggregationModule, UnfoldConv
 def make_cost_volume(left, right, max_disp):
     cost_volume = torch.ones(
         (left.size(0), left.size(1), max_disp, left.size(2), left.size(3)),
@@ -184,14 +183,6 @@ class StereoNet(nn.Module):
         # Use the main output for cost volume computation
         lf = lf_features["out"]
         rf = rf_features["out"]
-        # Compute cost volume
-        # # (1,32,24,68,120) self.max_disp=24
-        # cost_volume = make_cost_volume(lf, rf, self.max_disp)
-        # # cost_volume=(1,32,24,68,120)
-        # cost_volume = self.cost_filter(cost_volume).squeeze(1)
-        # x = F.softmax(cost_volume, dim=1)
-        # d = torch.arange(0, self.max_disp, device=x.device, dtype=x.dtype)
-        # x = torch.sum(x * d.view(1, -1, 1, 1), dim=1, keepdim=True)
 
         # Compute cost volume aanet style
         cost_volume = build_aanet_volume(lf, rf, self.max_disp)  # [B, D, H, W]
