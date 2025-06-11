@@ -79,34 +79,67 @@ def sequence_loss_ori(disp_preds, disp_init_pred, disp_gt, valid, loss_gamma=0.9
     }
     return disp_loss, metrics
 
-def sequence_loss(disp_preds, disp_gt, valid, loss_gamma=0.9, max_disp=192):
-    n_predictions = len(disp_preds)
+def sequence_loss(
+    disp_preds,
+    disp_gt,
+    valid_mask,
+    max_disp=192,
+    loss_gamma=0.9,
+    use_fixed_weights=True,
+    loss_type='smooth_l1',  # 可选：'l1' or 'smooth_l1'
+):
+    # Handle input format
+    if isinstance(disp_preds, dict):
+        preds = [disp_preds['disp_low'], disp_preds['disp_1']]
+    else:
+        preds = disp_preds
+
+    n_predictions = len(preds)
     assert n_predictions >= 1
-    disp_loss = 0.0
-    mag = torch.sum(disp_gt**2, dim=1).sqrt()
-    valid = ((valid >= 0.5) & (mag < max_disp)).unsqueeze(1)
-    assert valid.shape == disp_gt.shape
-    assert not torch.isinf(disp_gt[valid.bool()]).any()
 
-    for i in range(n_predictions):
-        adjusted_loss_gamma = loss_gamma**(15/(n_predictions - 1))
-        i_weight = adjusted_loss_gamma**(n_predictions - i - 1)
-        i_loss = (disp_preds[i] - disp_gt).abs()
-        disp_loss += i_weight * i_loss[valid.bool() & ~torch.isnan(i_loss)].mean()
+    # Compute valid mask
+    disp_mag = disp_gt.norm(p=2, dim=1, keepdim=True)
+    valid = (valid_mask >= 0.5) & (disp_mag < max_disp) & torch.isfinite(disp_gt)
+    valid = valid.expand_as(disp_gt)
 
-    epe = torch.sum((disp_preds[-1] - disp_gt)**2, dim=1).sqrt()
-    epe = epe.view(-1)[valid.view(-1)]
 
-    if valid.bool().sum() == 0:
-        epe = torch.Tensor([0.0]).cuda()
+    if use_fixed_weights:
+        if n_predictions == 2:
+            weights = [1 / 3, 2 / 3]
+        else:
+            raise ValueError("Fixed weight mode only supports 2-stage prediction.")
+    else:
+        adjusted_gamma = loss_gamma ** (15 / max(1, n_predictions - 1))
+        weights = [adjusted_gamma ** (n_predictions - i - 1) for i in range(n_predictions)]
+
+    loss = 0.0
+    # Weighted loss
+    for i, (pred, weight) in enumerate(zip(preds, weights)):
+        if loss_type == 'smooth_l1':
+            error_map = F.smooth_l1_loss(pred, disp_gt, reduction='none')
+        elif loss_type == 'l1':
+            error_map = (pred - disp_gt).abs()
+        valid_error = error_map[valid]
+        if valid_error.numel() > 0:
+            loss += weight * valid_error.mean()
+
+    # EPE from last prediction
+    final_pred = preds[-1]
+    epe = (final_pred - disp_gt).norm(p=2, dim=1)  # shape: (B, H, W)
+    epe_valid = epe[valid[:, 0, :, :]]  # remove channel dimension
+
+    if epe_valid.numel() == 0:
+        epe_valid = torch.tensor([0.0], device=disp_gt.device)
 
     metrics = {
-        'train/epe': epe.mean(),
-        'train/1px': (epe < 1).float().mean(),
-        'train/3px': (epe < 3).float().mean(),
-        'train/5px': (epe < 5).float().mean(),
+        'train/epe': epe_valid.mean(),
+        'train/1px': (epe_valid < 1).float().mean(),
+        'train/3px': (epe_valid < 3).float().mean(),
+        'train/5px': (epe_valid < 5).float().mean(),
     }
-    return disp_loss, metrics
+
+    return loss, metrics
+
 
 
 def fetch_optimizer(args, model):
@@ -207,9 +240,8 @@ def main(cfg):
         for data in tqdm(active_train_loader, dynamic_ncols=True, disable=not accelerator.is_main_process):
             _, left, right, disp_gt, valid = [x for x in data]
             with accelerator.autocast():
-                disp_preds = model(left, right, iters=cfg.train_iters)
+                disp_preds = model(left, right, disp_gt)
             # loss, metrics = sequence_loss(disp_preds, disp_init_pred, disp_gt, valid, max_disp=cfg.max_disp)
-            disp_preds = disp_preds["multi_scale"]
 
             loss, metrics = sequence_loss(disp_preds, disp_gt, valid)
             accelerator.backward(loss)

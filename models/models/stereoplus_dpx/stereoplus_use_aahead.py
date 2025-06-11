@@ -148,7 +148,7 @@ class StereoNet(nn.Module):
             "out": feat5  # Main output for backward compatibility
         }
         
-    def forward(self, left_img, right_img,gt_disp=None,iters=None,test_mode=False):
+    def forward(self, left_img, right_img, gt_disp=None):
         n, c, h, w = left_img.size()
         w_pad = (self.align - (w % self.align)) % self.align
         h_pad = (self.align - (h % self.align)) % self.align
@@ -164,12 +164,12 @@ class StereoNet(nn.Module):
             for key in ["s2", "s4", "s8", "s16", "s32"]
         ]
         outputs_train = self.StereoPlusPipeline.forward(inputs, gt_disp)
-
+        #disp_low, disp_1
+        # loss_weights = [1 / 3, 2 / 3]
         if self.training:
             return {
-                "disp": outputs_train[0],
-                "multi_scale": outputs_train[1],
-                "features": lf_features  # Return multi-scale features
+                "disp_low": outputs_train[0],
+                "disp_1": outputs_train[1],
             }
         else:
             return outputs_train[-1]

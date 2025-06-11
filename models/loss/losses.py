@@ -182,7 +182,58 @@ def calc_loss(pred, batch, args):
     return loss_dict
 
 
-if __name__ == "__main__":
-    cv = torch.rand(1, 320, 144, 240)
-    target = torch.rand(1, 1, 576, 960) * 400
-    calc_init_loss(cv, target, 320)
+if __name__ == '__main__':
+    print("--- calc_multi_scale_loss 测试示例 ---")
+
+    # 示例参数
+    batch_size = 2
+    height_original = 544
+    width_original = 960
+    max_original_disp = 192.0 # 原始图像的最大视差值
+
+    # 模拟原始目标视差图 (高分辨率)
+    # 使用随机数模拟，实际应为真实视差图
+    # 确保 target 有效值，以便 mask 不全为 False
+    target_original = torch.rand(batch_size, 1, height_original, width_original) * max_original_disp
+    # 模拟一些小的有效视差值和一些大的（无效）视差值
+    target_original[target_original < 5.0] = 0.0 # 设置一些接近0的值，模拟无效区域或背景
+    target_original[target_original > max_original_disp * 0.8] = max_original_disp * 1.1 # 模拟一些超出max_disp的无效值
+
+    # 模拟不同尺度的预测 (例如，预测图是原始图的 1/4 尺寸)
+    pred_height = height_original // 4  # 64
+    pred_width = width_original // 4   # 128
+    pred_disp = torch.rand(batch_size, 1, pred_height, pred_width) * (max_original_disp / 4) # 预测的视差值范围通常与当前尺度匹配
+
+    # 模拟 max_disp 输入 (通常是标量，但 PyTorch 允许广播)
+    max_disp_tensor = torch.tensor([max_original_disp]).view(1, 1, 1, 1)
+
+    print(f"原始目标视差图尺寸: {target_original.shape}")
+    print(f"预测视差图尺寸: {pred_disp.shape}")
+    print(f"原始最大视差: {max_original_disp}")
+    print("-" * 30)
+
+    # --- 场景 1: 基本情况 (tile_size=1) ---
+    print("\n--- 场景 1: 基本情况 (tile_size=1, A=1) ---")
+    loss1 = calc_multi_scale_loss(pred_disp, target_original, max_disp_tensor, a=0.8, c=0.5, A=1, tile_size=1)
+    print(f"基本情况下的损失: {loss1.item():.6f}")
+
+    # --- 场景 2: 改变鲁棒损失参数 a 和 c ---
+    print("\n--- 场景 2: 改变鲁棒损失参数 (a=0.5, c=0.1) ---")
+    loss2 = calc_multi_scale_loss(pred_disp, target_original, max_disp_tensor, a=0.5, c=0.1, A=1, tile_size=1)
+    print(f"改变鲁棒损失参数后的损失: {loss2.item():.6f}")
+
+    # --- 场景 3: 启用 tile_size > 1 和 A 过滤 ---
+    # 模拟一个较大的tile_size，这会影响 scale_disp 并触发 (diff < A) 过滤
+    print("\n--- 场景 3: 启用 tile_size > 1 和 A 过滤 (tile_size=2, A=0.1) ---")
+    loss3 = calc_multi_scale_loss(pred_disp, target_original, max_disp_tensor, a=0.8, c=0.5, A=0.1, tile_size=2)
+    print(f"启用 tile_size 和 A 过滤后的损失: {loss3.item():.6f}")
+
+    # --- 场景 4: 极端情况 - 所有像素都被掩盖 (mask.sum() 接近 0) ---
+    print("\n--- 场景 4: 极端情况 - 所有像素都被掩盖 (mask.sum() 接近 0) ---")
+    # 制造一个几乎没有有效target值的场景
+    target_sparse = torch.zeros(batch_size, 1, height_original, width_original)
+    loss4 = calc_multi_scale_loss(pred_disp, target_sparse, max_disp_tensor, a=0.8, c=0.5, A=1, tile_size=1)
+    print(f"所有像素都被掩盖时的损失: {loss4.item():.6f}")
+    print("注意: 此时结果可能接近0或NaN，因为有效像素很少或没有，分母接近1e-6")
+
+    print("\n--- 测试完成 ---")
