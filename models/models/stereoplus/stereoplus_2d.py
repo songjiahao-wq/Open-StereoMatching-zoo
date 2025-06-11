@@ -22,6 +22,34 @@ def make_cost_volume(left, right, max_disp):
 
     return cost_volume
 
+def build_aanet_volume(left_feat, right_feat, max_disp):
+    """
+    构造 AANet 风格的代价体，输入为显式的左右图特征。
+
+    Args:
+        left_feat:  [B, C, H, W] 左图特征
+        right_feat: [B, C, H, W] 右图特征
+        max_disp:   int，最大视差值
+
+    Returns:
+        volume: [B, max_disp, H, W] 构造好的 cost volume
+    """
+    B, C, H, W = left_feat.shape
+    cost_volume = []
+
+    for d in range(max_disp):
+        if d > 0:
+            # 右图右移 d，左图保持不动（意味着左图看得更远）
+            cost = left_feat[:, :, :, d:] * right_feat[:, :, :, :-d]  # [B, C, H, W-d]
+            cost = F.pad(cost, (d, 0, 0, 0))  # pad 左边 d 列
+        else:
+            cost = left_feat * right_feat  # [B, C, H, W]
+
+        cost = cost.mean(dim=1, keepdim=True)  # 通道平均 → [B, 1, H, W]
+        cost_volume.append(cost)
+
+    volume = torch.cat(cost_volume, dim=1)  # [B, D, H, W]
+    return volume
 
 def conv_3x3(in_c, out_c, s=1, d=1):
     return nn.Sequential(
@@ -86,24 +114,23 @@ class StereoNet(nn.Module):
         self.conv1 = nn.Sequential(conv_3x3(3, 32, 2), ResBlock(32))  # 1/2
         self.conv2 = nn.Sequential(conv_3x3(32, 32, 2), ResBlock(32))  # 1/4
         self.conv3 = nn.Sequential(conv_3x3(32, 32, 2), ResBlock(32))  # 1/8
-        self.conv4 = nn.Sequential(conv_3x3(32, 32, 2), ResBlock(32))  # 1/16
-        self.conv5 = nn.Sequential(conv_3x3(32, 32, 2), ResBlock(32))  # 1/32
+        # self.conv4 = nn.Sequential(conv_3x3(32, 32, 2), ResBlock(32))  # 1/16
+        # self.conv5 = nn.Sequential(conv_3x3(32, 32, 2), ResBlock(32))  # 1/32
         self.last_conv = nn.Conv2d(32, 32, 3, 1, 1)
-
         self.cost_filter = nn.Sequential(
-            nn.Conv3d(32, 32, 3, 1, 1),
-            nn.BatchNorm3d(32),
+            nn.Conv2d(32, 32, 3, 1, 1),
+            nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.Conv3d(32, 32, 3, 1, 1),
-            nn.BatchNorm3d(32),
+            nn.Conv2d(32, 32, 3, 1, 1),
+            nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.Conv3d(32, 32, 3, 1, 1),
-            nn.BatchNorm3d(32),
+            nn.Conv2d(32, 32, 3, 1, 1),
+            nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.Conv3d(32, 32, 3, 1, 1),
-            nn.BatchNorm3d(32),
+            nn.Conv2d(32, 32, 3, 1, 1),
+            nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.Conv3d(32, 1, 3, 1, 1),
+            nn.Conv2d(32, 1, 3, 1, 1)
         )
         self.refine_layer = nn.ModuleList([RefineNet() for _ in range(self.k)])
     def freeze_bn(self):
@@ -128,7 +155,36 @@ class StereoNet(nn.Module):
             # "s32": feat5,
             "out": feat5  # Main output for backward compatibility
         }
-        
+    def compute_cost_volume(self, lf, rf, max_disp):
+        # (1,32,24,68,120) self.max_disp=24
+        cost_volume = make_cost_volume(lf, rf, self.max_disp)
+        # cost_volume = build_aanet_volume(lf, rf, self.max_disp)
+        B, C, D, H, W = cost_volume.shape
+        cost_volume = cost_volume.permute(0, 2, 1, 3, 4).reshape(B * D, C, H, W)
+        # cost_volume=(1,32,24,68,120)
+        cost_volume = self.cost_filter(cost_volume)
+        cost_volume = cost_volume.view(B, D, H, W)  # (B, D, H, W)
+        # cost_volume=(1,24,17,30)
+        x = F.softmax(cost_volume, dim=1)
+        d = torch.arange(0, self.max_disp, device=x.device, dtype=x.dtype)
+        x = torch.sum(x * d.view(1, -1, 1, 1), dim=1, keepdim=True)# [B, 1, H, W]
+        return x
+    def compute_cost_volume2(self, lf, rf, max_disp):
+        # (1,32,24,68,120) self.max_disp=24
+        cost_volume = build_aanet_volume(lf, rf, self.max_disp)
+        B, D, H, W = cost_volume.shape
+        # 加上 channel dim，变成 [B * D, 1, H, W]
+        cost_volume = cost_volume.view(B * D, 1, H, W)
+        # 使用 2D 卷积过滤器（预先定义好）
+        cost_volume = self.cost_filter(cost_volume)  # 输出仍为 [B * D, 1, H, W]
+
+        # 去掉通道维度，并 reshape 回原始格式
+        cost_volume = cost_volume.view(B, D, H, W)
+        # cost_volume=(1,24,17,30)
+        x = F.softmax(cost_volume, dim=1)
+        d = torch.arange(0, self.max_disp, device=x.device, dtype=x.dtype)
+        x = torch.sum(x * d.view(1, -1, 1, 1), dim=1, keepdim=True)# [B, 1, H, W]
+        return x
     def forward(self, left_img, right_img,iters=None,test_mode=False):
         n, c, h, w = left_img.size()
         w_pad = (self.align - (w % self.align)) % self.align
@@ -145,14 +201,8 @@ class StereoNet(nn.Module):
         lf = lf_features["out"]
         rf = rf_features["out"]
 
-        # (1,32,24,68,120) self.max_disp=24
-        cost_volume = make_cost_volume(lf, rf, self.max_disp)
-        # cost_volume=(1,32,24,68,120)
-        cost_volume = self.cost_filter(cost_volume).squeeze(1)
-        # cost_volume=(1,24,17,30)
-        x = F.softmax(cost_volume, dim=1)
-        d = torch.arange(0, self.max_disp, device=x.device, dtype=x.dtype)
-        x = torch.sum(x * d.view(1, -1, 1, 1), dim=1, keepdim=True)# [B, 1, H, W]
+        # Compute cost volume
+        x = self.compute_cost_volume(lf, rf, self.max_disp)
 
         multi_scale = []
         for refine in self.refine_layer:
@@ -176,9 +226,9 @@ if __name__ == "__main__":
     left = torch.rand(1, 3, 544, 960)
     right = torch.rand(1, 3, 544, 960)
     model = StereoNet(cfg=None)
-
-    print(model(left, right)["disp"].size())
     model.eval()
+    print(model(left, right).size())
+
     total_ops, total_params = profile(
         model,
         (
@@ -191,6 +241,7 @@ if __name__ == "__main__":
             total_ops / (1000 ** 3), total_params / (1000 ** 2)
         )
     )
+
     torch.onnx.export(
         model,
         (left, right),

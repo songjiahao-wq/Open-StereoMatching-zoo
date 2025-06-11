@@ -45,6 +45,7 @@ def make_cost_volume_aanet(left_feat, right_feat, max_disp):
     return cost_volume
 
 
+
 def make_cost_volume_abs_diff(left, right, max_disp):
     B, C, H, W = left.size()
     cost_volume = torch.zeros(B, max_disp, H, W, device=left.device)

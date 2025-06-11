@@ -21,9 +21,15 @@ class StereoPlusPipeline(nn.Module):
         self.height = height
         self.width = width
 
+
         # 配置参数
+        self.model_input_channels = [32,32, 64, 96, 16]  # 高分辨率特征和 FPN 输入特征
+        self.model_input_channels = [32,32, 32, 32, 32]  # 高分辨率特征和 FPN 输入特征
+        self.model_input_strides = [2, 4, 8, 16, 32]
+
+        # FPN 配置
         self.in_strides = [8, 16, 32]
-        self.in_channels = [64, 96, 16]
+        self.in_channels = [32, 32, 32]
         self.out_strides = [8, 16, 32]
         self.out_channels = [16, 16, 16]
         self.fix_out_channel = None
@@ -82,16 +88,15 @@ class StereoPlusPipeline(nn.Module):
 
     def run(self):
         # 创建输入特征图
-        fpn_inputs = [
+        inputs_l = [
             torch.randn(self.B, c, self.height // s, self.width // s)
-            for c, s in zip(self.in_channels, self.in_strides)
+            for c, s in zip(self.model_input_channels, self.model_input_strides)
         ]
-
-        # 添加高分辨率特征
-        feat1 = torch.randn(self.B, 32, self.height // 2, self.width // 2)
-        feat2 = torch.randn(self.B, 32, self.height // 4, self.width // 4)
-        inputs = [feat1, feat2] + fpn_inputs
-
+        inputs_r = [
+            torch.randn(self.B, c, self.height // s, self.width // s)
+            for c, s in zip(self.model_input_channels, self.model_input_strides)
+        ]
+        inputs = [torch.cat([l, r], dim=0) for l, r in zip(inputs_l, inputs_r)]
         for i, out in enumerate(inputs):
             print(f"Input {i + 1} shape: {out.shape}")
 

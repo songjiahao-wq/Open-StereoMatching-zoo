@@ -105,7 +105,7 @@ class RefineNet(nn.Module):
         x = torch.cat((disp, rgb), dim=1)
         x = self.conv0(x)
         return F.relu(disp + x)
-
+from models.models.stereoplus_dpx.neck import StereoPlusPipeline
 
 class StereoNet(nn.Module):
     def __init__(self, cfg):
@@ -122,29 +122,9 @@ class StereoNet(nn.Module):
         self.conv5 = nn.Sequential(conv_3x3(32, 32, 2), ResBlock(32))  # 1/32
         self.last_conv = nn.Conv2d(32, 32, 3, 1, 1)
 
-        self.cost_filter = nn.Sequential(
-            nn.Conv3d(32, 32, 3, 1, 1),
-            nn.BatchNorm3d(32),
-            nn.ReLU(),
-            nn.Conv3d(32, 32, 3, 1, 1),
-            nn.BatchNorm3d(32),
-            nn.ReLU(),
-            nn.Conv3d(32, 32, 3, 1, 1),
-            nn.BatchNorm3d(32),
-            nn.ReLU(),
-            nn.Conv3d(32, 32, 3, 1, 1),
-            nn.BatchNorm3d(32),
-            nn.ReLU(),
-            nn.Conv3d(32, 1, 3, 1, 1),
-        )
-        self.cost_filter_aanet = CostAggregation2D(self.max_disp)
-        self.refine_layer = nn.ModuleList([RefineNet() for _ in range(self.k)])
+        self.StereoPlusPipeline = StereoPlusPipeline(B=8, height=544, width=960)
+        self.StereoPlusPipeline.in_channels = [32, 32, 32]  # Adjusted for StereoPlus
 
-        self.cost_fusion = AdaptiveAggregationModule(
-            num_scales=3,  # 多尺度层数，例如 3
-            num_output_branches=1,
-            max_disp=self.max_disp  # 通常是低分辨率下的 disparity 上限
-        )
     def freeze_bn(self):
         for m in self.modules():
             if isinstance(m, nn.BatchNorm2d):
@@ -168,7 +148,7 @@ class StereoNet(nn.Module):
             "out": feat5  # Main output for backward compatibility
         }
         
-    def forward(self, left_img, right_img,iters=None,test_mode=False):
+    def forward(self, left_img, right_img,gt_disp=None,iters=None,test_mode=False):
         n, c, h, w = left_img.size()
         w_pad = (self.align - (w % self.align)) % self.align
         h_pad = (self.align - (h % self.align)) % self.align
@@ -179,50 +159,32 @@ class StereoNet(nn.Module):
         # Extract multi-scale features
         lf_features = self.feature_extractor(left_img)
         rf_features = self.feature_extractor(right_img)
-        
-        # Use the main output for cost volume computation
-        lf = lf_features["out"]
-        rf = rf_features["out"]
+        inputs = [
+            torch.cat([lf_features[key], rf_features[key]], dim=0)
+            for key in ["s2", "s4", "s8", "s16", "s32"]
+        ]
+        outputs_train = self.StereoPlusPipeline.forward(inputs, gt_disp)
 
-        # Compute cost volume aanet style
-        cost_volume = build_aanet_volume(lf, rf, self.max_disp)  # [B, D, H, W]
-
-        # 2D aggregation
-        # 对 pyramid volume 使用聚合
-        volumes = [cost_volume_lowres, cost_volume_midres, cost_volume_highres]
-        fused_volumes = self.cost_fusion(volumes)
-        final_volume = fused_volumes[0]  # 最终结果
-
-        # Disparity regression
-        prob_volume = F.softmax(cost_volume, dim=1)
-        disp_probs = F.softmax(final_volume, dim=1)
-        disp_values = torch.arange(0, final_volume.shape[1], device=final_volume.device).view(1, -1, 1, 1)
-        disp = torch.sum(disp_probs * disp_values, dim=1, keepdim=True)  # [B, 1, H, W]
-
-        multi_scale = []
-        for refine in self.refine_layer:
-            x = refine(disp, left_img)
-            scale = left_img.size(3) / x.size(3)
-            full_res = F.interpolate(x * scale, left_img.shape[2:])[:, :, :h, :w]
-            multi_scale.append(full_res)
-        if test_mode:
-            return multi_scale[-1]
-        else:
+        if self.training:
             return {
-                "disp": multi_scale[-1],
-                "multi_scale": multi_scale,
+                "disp": outputs_train[0],
+                "multi_scale": outputs_train[1],
                 "features": lf_features  # Return multi-scale features
             }
+        else:
+            return outputs_train[-1]
+
 
 
 if __name__ == "__main__":
     from thop import profile
 
-    left = torch.rand(1, 3, 544, 960)
-    right = torch.rand(1, 3, 544, 960)
+    left = torch.rand(8, 3, 544, 960)
+    right = torch.rand(8, 3, 544, 960)
+    gt_disp = torch.rand(8, 544, 960)
     model = StereoNet(cfg=None)
 
-    print(model(left, right)["disp"].size())
+    print(model(left, right, gt_disp)["disp"].size())
 
     total_ops, total_params = profile(
         model,
