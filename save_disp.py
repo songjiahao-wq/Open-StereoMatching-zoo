@@ -7,6 +7,7 @@ import torch
 from tqdm import tqdm
 from pathlib import Path
 from models.models.stereoplus.stereoplus_aanet import StereoNet
+from models.models.stereonet.TinyHITNet_stereonet import StereoNet
 from core.utils.utils import InputPadder
 from PIL import Image
 from matplotlib import pyplot as plt
@@ -16,7 +17,8 @@ import cv2
 import torch.nn.functional as F
 import sys
 import time
-
+from config import Stereo
+Stereo = Stereo()
 DEVICE = 'cuda'
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
@@ -111,31 +113,38 @@ def demo(args):
             # )
 
 
-
+            if image1.shape[1] == 4:
+                image1 = image1[:, :3, :, :]
+                image2 = image2[:, :3, :, :]
             start_time = time.time()
             disp = model(image1, image2, None, test_mode=True)
 
             end_time = time.time()
             inference_time = end_time - start_time
             print(f"Inference time: {inference_time:.4f} seconds")
-            disp = padder.unpad(disp)
-            disp = visualize_disp(disp.cpu().numpy().squeeze())
+            disp = padder.unpad(disp).cpu().numpy().squeeze()
             print(np.max(disp), np.min(disp), disp.shape)
+            disp_color = visualize_disp(disp)
             file_stem = os.path.join(output_directory, imfile1.split('/')[-1])
-            # disp = disp.cpu().numpy().squeeze()
-            # disp = np.round(disp * 256).astype(np.uint16)
-            skimage.io.imsave(file_stem, disp)
+            cv2.imwrite(file_stem, disp_color)
+            if image1.ndim == 4:
+                image1 = image1.squeeze(0).permute(1, 2, 0).cpu().numpy()
+                image1 = cv2.cvtColor(image1, cv2.COLOR_RGB2BGR)
+                image1 = image1.astype(np.uint8)
+            print(disp.shape, image1.shape)
+            Stereo.show_depth_point(disp, image1)
+            # skimage.io.imsave(file_stem, disp)
             if args.save_numpy:
                 np.save(output_directory / f"{file_stem}.npy", disp.squeeze())
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--restore_ckpt', help="restore checkpoint", default="195000.pth")
+    parser.add_argument('--restore_ckpt', help="restore checkpoint", default="kitti_2012/final.pth")
 
     parser.add_argument('--save_numpy', action='store_true', help='save output as numpy arrays')
-    parser.add_argument('-l', '--left_imgs', help="path to all first (left) frames", default="./data/mid/im0.png")
-    parser.add_argument('-r', '--right_imgs', help="path to all second (right) frames", default="./data/mid/im1.png")
+    parser.add_argument('-l', '--left_imgs', help="path to all first (left) frames", default="./data/222/im0.png")
+    parser.add_argument('-r', '--right_imgs', help="path to all second (right) frames", default="./data/222/im1.png")
 
     parser.add_argument('--output_directory', help="directory to save output", default="kitti_2012")
 

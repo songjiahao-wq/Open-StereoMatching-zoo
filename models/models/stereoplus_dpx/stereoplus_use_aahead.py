@@ -7,7 +7,42 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from models import Conv
 from models.models.stereoplus_dpx.headplus import AdaptiveAggregationModule, UnfoldConv
+
+
+def fuse_conv_and_bn(conv, bn):
+    """
+    Fuses Conv2d and BatchNorm2d layers into a single Conv2d layer.
+
+    See https://tehnokv.com/posts/fusing-batchnorm-and-conv/.
+    """
+    fusedconv = (
+        nn.Conv2d(
+            conv.in_channels,
+            conv.out_channels,
+            kernel_size=conv.kernel_size,
+            stride=conv.stride,
+            padding=conv.padding,
+            dilation=conv.dilation,
+            groups=conv.groups,
+            bias=True,
+        )
+        .requires_grad_(False)
+        .to(conv.weight.device)
+    )
+
+    # Prepare filters
+    w_conv = conv.weight.clone().view(conv.out_channels, -1)
+    w_bn = torch.diag(bn.weight.div(torch.sqrt(bn.eps + bn.running_var)))
+    fusedconv.weight.copy_(torch.mm(w_bn, w_conv).view(fusedconv.weight.shape))
+
+    # Prepare spatial bias
+    b_conv = torch.zeros(conv.weight.size(0), device=conv.weight.device) if conv.bias is None else conv.bias
+    b_bn = bn.bias - bn.weight.mul(bn.running_mean).div(torch.sqrt(bn.running_var + bn.eps))
+    fusedconv.bias.copy_(torch.mm(w_bn, b_conv.reshape(-1, 1)).reshape(-1) + b_bn)
+
+    return fusedconv
 def make_cost_volume(left, right, max_disp):
     cost_volume = torch.ones(
         (left.size(0), left.size(1), max_disp, left.size(2), left.size(3)),
@@ -163,38 +198,60 @@ class StereoNet(nn.Module):
             torch.cat([lf_features[key], rf_features[key]], dim=0)
             for key in ["s2", "s4", "s8", "s16", "s32"]
         ]
-        outputs_train = self.StereoPlusPipeline.forward(inputs, gt_disp)
         #disp_low, disp_1
-        # loss_weights = [1 / 3, 2 / 3]
+        #loss_weights = [1 / 3, 2 / 3]
         if self.training:
+            disp_low, disp_1 = self.StereoPlusPipeline.forward(inputs, gt_disp)
+
             return {
-                "disp_low": outputs_train[0],
-                "disp_1": outputs_train[1],
+                "disp_low": disp_low,
+                "disp_1": disp_1,
             }
         else:
-            return outputs_train[-1]
+            disp_1 = self.StereoPlusPipeline.forward(inputs)
+            return disp_1
 
+
+    def fuse(self, model):
+        """Fuses Conv2d() and BatchNorm2d() layers in the model to improve inference speed."""
+        for m in model.modules():
+            if isinstance(m, (Conv)) and hasattr(m, "bn"):
+                m.conv = fuse_conv_and_bn(m.conv, m.bn)  # update conv
+                delattr(m, "bn")  # remove batchnorm
+                m.forward = m.forward_fuse  # update forward
+        return self
 
 
 if __name__ == "__main__":
     from thop import profile
 
-    left = torch.rand(8, 3, 544, 960)
-    right = torch.rand(8, 3, 544, 960)
-    gt_disp = torch.rand(8, 544, 960)
+    left = torch.rand(1, 3, 544, 960)
+    right = torch.rand(1, 3, 544, 960)
+    gt_disp = torch.rand(1, 544, 960)
     model = StereoNet(cfg=None)
+    model.eval()
 
-    print(model(left, right, gt_disp)["disp"].size())
+    print(model(left, right).size())
+    # model.fuse(model)  # 调用融合Conv+BN，替换权重和forward
+    # total_ops, total_params = profile(
+    #     model,
+    #     (
+    #         left,
+    #         right,
+    #     ),
+    # )
+    # print(
+    #     "{:.4f} MACs(G)\t{:.4f} Params(M)".format(
+    #         total_ops / (1000 ** 3), total_params / (1000 ** 2)
+    #     )
+    # )
 
-    total_ops, total_params = profile(
+    torch.onnx.export(
         model,
-        (
-            left,
-            right,
-        ),
-    )
-    print(
-        "{:.4f} MACs(G)\t{:.4f} Params(M)".format(
-            total_ops / (1000 ** 3), total_params / (1000 ** 2)
-        )
+        (left, right),
+        "stereoplus_aanet.onnx",
+        opset_version=16,  # ONNX opset 版本
+        input_names=["left", "right"],  # 输入名称
+        output_names=["output"],  # 输出名称
+        dynamic_axes=None,
     )

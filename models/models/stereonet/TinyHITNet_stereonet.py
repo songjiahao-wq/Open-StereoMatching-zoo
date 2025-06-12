@@ -136,22 +136,22 @@ class StereoNet(nn.Module):
             scale = left_img.size(3) / x.size(3)
             full_res = F.interpolate(x * scale, left_img.shape[2:])[:, :, :h, :w]
             multi_scale.append(full_res)
-        if test_mode:
-            return multi_scale[-1]
-        else:
+        if self.training:
             return {
                 "disp": multi_scale[-1],
                 "multi_scale": multi_scale,
             }
+        else:
+            return multi_scale[-1]
+
 
 
 if __name__ == "__main__":
     from thop import profile
 
-    left = torch.rand(1, 3, 544, 960)
-    right = torch.rand(1, 3, 544, 960)
+    left = torch.rand(1, 3, 480, 640)
+    right = torch.rand(1, 3, 480, 640)
     model = StereoNet(cfg=None)
-
     print(model(left, right)["disp"].size())
 
     total_ops, total_params = profile(
@@ -165,4 +165,15 @@ if __name__ == "__main__":
         "{:.4f} MACs(G)\t{:.4f} Params(M)".format(
             total_ops / (1000 ** 3), total_params / (1000 ** 2)
         )
+    )
+    model.eval()
+
+    torch.onnx.export(
+        model,
+        (left, right),
+        "stereoplus_aanet.onnx",
+        opset_version=16,  # ONNX opset 版本
+        input_names=["left", "right"],  # 输入名称
+        output_names=["output"],  # 输出名称
+        dynamic_axes=None  # 动态维度（可选）
     )

@@ -126,7 +126,8 @@ class StereoDataset(data.Dataset):
 
 
 class SceneFlowDatasets(StereoDataset):
-    def __init__(self, aug_params=None, root='G:\DATA\StereoDatasets\sceneflow', dstype='frames_finalpass', things_test=False):
+    def __init__(self, aug_params=None, root='/home/mm/sjh/DATA/sceneflow', dstype='frames_finalpass',
+                 things_test=False):
         super(SceneFlowDatasets, self).__init__(aug_params)
         assert os.path.exists(root)
         self.root = root
@@ -146,13 +147,13 @@ class SceneFlowDatasets(StereoDataset):
         root = self.root
         # left_images = sorted( glob(osp.join(root, self.dstype, split, '*/*/left/*.png')) )
         # right_images = [ im.replace('left', 'right') for im in left_images ]
-        right_images = sorted( glob(osp.join(root, self.dstype, split, '*/*/right/*.png')) )
-        left_images = [ im.replace('right', 'left') for im in right_images ]
-        disparity_images = [ im.replace(self.dstype, 'disparity').replace('.png', '.pfm') for im in left_images ]
+        right_images = sorted(glob(osp.join(root, self.dstype, split, '*/*/right/*.png')))
+        left_images = [im.replace('right', 'left') for im in right_images]
+        disparity_images = [im.replace(self.dstype, 'disparity').replace('.png', '.pfm') for im in left_images]
 
         for idx, (img1, img2, disp) in enumerate(zip(left_images, right_images, disparity_images)):
-                self.image_list += [ [img1, img2] ]
-                self.disparity_list += [ disp ]
+            self.image_list += [[img1, img2]]
+            self.disparity_list += [disp]
         logging.info(f"Added {len(self.disparity_list) - original_length} from FlyingThings {self.dstype}")
 
     def _add_monkaa(self, split="TRAIN"):
@@ -162,13 +163,13 @@ class SceneFlowDatasets(StereoDataset):
         root = self.root
         # left_images = sorted( glob(osp.join(root, self.dstype, split, '*/left/*.png')) )
         # right_images = [ image_file.replace('left', 'right') for image_file in left_images ]
-        right_images = sorted( glob(osp.join(root, self.dstype, split, '*/*/right/*.png')) )
-        left_images = [ im.replace('right', 'left') for im in right_images ]
-        disparity_images = [ im.replace(self.dstype, 'disparity').replace('.png', '.pfm') for im in left_images ]
+        right_images = sorted(glob(osp.join(root, self.dstype, split, '*/*/right/*.png')))
+        left_images = [im.replace('right', 'left') for im in right_images]
+        disparity_images = [im.replace(self.dstype, 'disparity').replace('.png', '.pfm') for im in left_images]
 
         for img1, img2, disp in zip(left_images, right_images, disparity_images):
-            self.image_list += [ [img1, img2] ]
-            self.disparity_list += [ disp ]
+            self.image_list += [[img1, img2]]
+            self.disparity_list += [disp]
         logging.info(f"Added {len(self.disparity_list) - original_length} from Monkaa {self.dstype}")
 
 
@@ -179,13 +180,13 @@ class SceneFlowDatasets(StereoDataset):
         root = self.root
         # left_images = sorted( glob(osp.join(root, self.dstype, split, '*/*/*/left/*.png')) )
         # right_images = [ image_file.replace('left', 'right') for image_file in left_images ]
-        right_images = sorted( glob(osp.join(root, self.dstype, split, '*/*/right/*.png')) )
-        left_images = [ im.replace('right', 'left') for im in right_images ]
-        disparity_images = [ im.replace(self.dstype, 'disparity').replace('.png', '.pfm') for im in left_images ]
+        right_images = sorted(glob(osp.join(root, self.dstype, split, '*/*/right/*.png')))
+        left_images = [im.replace('right', 'left') for im in right_images]
+        disparity_images = [im.replace(self.dstype, 'disparity').replace('.png', '.pfm') for im in left_images]
 
         for img1, img2, disp in zip(left_images, right_images, disparity_images):
-            self.image_list += [ [img1, img2] ]
-            self.disparity_list += [ disp ]
+            self.image_list += [[img1, img2]]
+            self.disparity_list += [disp]
         logging.info(f"Added {len(self.disparity_list) - original_length} from Driving {self.dstype}")
 
 
@@ -194,26 +195,29 @@ class ETH3D(StereoDataset):
         super(ETH3D, self).__init__(aug_params, sparse=True)
         assert os.path.exists(root)
 
-        image1_list = sorted( glob(osp.join(root, f'two_view_{split}/*/im0.png')) )
-        image2_list = sorted( glob(osp.join(root, f'two_view_{split}/*/im1.png')) )
-        disp_list = sorted( glob(osp.join(root, 'two_view_training_gt/*/disp0GT.pfm')) ) if split == 'training' else [osp.join(root, 'two_view_training_gt/playground_1l/disp0GT.pfm')] * len(image1_list)
+        image1_list = sorted(glob(osp.join(root, f'two_view_{split}/*/im0.png')))
+        image2_list = sorted(glob(osp.join(root, f'two_view_{split}/*/im1.png')))
+        disp_list = sorted(glob(osp.join(root, 'two_view_training_gt/*/disp0GT.pfm'))) if split == 'training' else [
+                                                                                                                       osp.join(root, 'two_view_training_gt/playground_1l/disp0GT.pfm')] * len(image1_list)
 
         for img1, img2, disp in zip(image1_list, image2_list, disp_list):
-            self.image_list += [ [img1, img2] ]
-            self.disparity_list += [ disp ]
+            self.image_list += [[img1, img2]]
+            self.disparity_list += [disp]
+
 
 class SintelStereo(StereoDataset):
     def __init__(self, aug_params=None, root='datasets/SintelStereo'):
         super().__init__(aug_params, sparse=True, reader=frame_utils.readDispSintelStereo)
 
-        image1_list = sorted( glob(osp.join(root, 'training/*_left/*/frame_*.png')) )
-        image2_list = sorted( glob(osp.join(root, 'training/*_right/*/frame_*.png')) )
-        disp_list = sorted( glob(osp.join(root, 'training/disparities/*/frame_*.png')) ) * 2
+        image1_list = sorted(glob(osp.join(root, 'training/*_left/*/frame_*.png')))
+        image2_list = sorted(glob(osp.join(root, 'training/*_right/*/frame_*.png')))
+        disp_list = sorted(glob(osp.join(root, 'training/disparities/*/frame_*.png'))) * 2
 
         for img1, img2, disp in zip(image1_list, image2_list, disp_list):
             assert img1.split('/')[-2:] == disp.split('/')[-2:]
-            self.image_list += [ [img1, img2] ]
-            self.disparity_list += [ disp ]
+            self.image_list += [[img1, img2]]
+            self.disparity_list += [disp]
+
 
 class FallingThings(StereoDataset):
     def __init__(self, aug_params=None, root='/data2/cjd/data_wxq/fallingthings'):
@@ -455,6 +459,21 @@ def fetch_dataloader(args):
             mbeval3 = Middlebury(aug_params, split='MiddEval3', resolution='H')
             logging.info(f"Adding {len(mbeval3)} samples from Middlebury Eval3")
             new_dataset = tartanair + sceneflow + fallingthings + instereo2k * 50 + carla * 50 + crestereo + mb2005 * 200 + mb2006 * 200 + mb2014 * 200 + mb2021 * 200 + mbeval3 * 200
+            logging.info(f"Adding {len(new_dataset)} samples from Middlebury Mixture Dataset")
+        elif dataset_name == 'sceneflow_middlebury_train':
+            sceneflow = SceneFlowDatasets(aug_params, dstype='frames_finalpass')
+            logging.info(f"Adding {len(sceneflow)} samples from SceneFlow")
+            mb2005 = Middlebury(aug_params, split='2005')
+            logging.info(f"Adding {len(mb2005)} samples from Middlebury 2005")
+            mb2006 = Middlebury(aug_params, split='2006')
+            logging.info(f"Adding {len(mb2006)} samples from Middlebury 2006")
+            mb2014 = Middlebury(aug_params, split='2014')
+            logging.info(f"Adding {len(mb2014)} samples from Middlebury 2014")
+            mb2021 = Middlebury(aug_params, split='2021')
+            logging.info(f"Adding {len(mb2021)} samples from Middlebury 2021")
+            mbeval3 = Middlebury(aug_params, split='MiddEval3', resolution='H')
+            logging.info(f"Adding {len(mbeval3)} samples from Middlebury Eval3")
+            new_dataset = sceneflow + mb2005 * 200 + mb2006 * 200 + mb2014 * 200 + mb2021 * 200 + mbeval3 * 200
             logging.info(f"Adding {len(new_dataset)} samples from Middlebury Mixture Dataset")
         elif dataset_name == 'middlebury_finetune':
             crestereo = CREStereoDataset(aug_params)
