@@ -192,13 +192,17 @@ def main(cfg):
     kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
     accelerator = Accelerator(mixed_precision='bf16', dataloader_config=DataLoaderConfiguration(use_seedable_sampler=True), log_with='wandb', kwargs_handlers=[kwargs], step_scheduler_with_optimizer=False)
     accelerator.init_trackers(project_name=cfg.project_name, config=OmegaConf.to_container(cfg, resolve=True), init_kwargs={'wandb': cfg.wandb})
-    wandb_run_name = accelerator.project_configuration.run_name
+    # 确保 wandb 已初始化
+    if accelerator.is_main_process:
+        wandb_run_name = wandb.run.name if wandb.run else "unnamed_run"
+    else:
+        wandb_run_name = "unnamed_run"  # 非主进程可能需要广播
     save_root = Path(cfg.save_path) / wandb_run_name
     save_root.mkdir(parents=True, exist_ok=True)
 
     train_dataset = datasets.fetch_dataloader(cfg)
     # Create a subset with first 1000 samples
-    train_dataset = Subset(train_dataset, indices=range(1000))
+    # train_dataset = Subset(train_dataset, indices=range(1000))
 
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=cfg.batch_size//cfg.num_gpu,
         pin_memory=True, shuffle=True, num_workers=int(4), drop_last=True)
@@ -240,6 +244,7 @@ def main(cfg):
         for data in tqdm(active_train_loader, dynamic_ncols=True, disable=not accelerator.is_main_process):
             _, left, right, disp_gt, valid = [x for x in data]
             with accelerator.autocast():
+                disp_gt = disp_gt.squeeze(1)
                 disp_preds = model(left, right, disp_gt)
             # loss, metrics = sequence_loss(disp_preds, disp_init_pred, disp_gt, valid, max_disp=cfg.max_disp)
 

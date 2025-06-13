@@ -165,7 +165,7 @@ def main(cfg):
 
     train_dataset = datasets.fetch_dataloader(cfg)
     # Create a subset with first 1000 samples
-    train_dataset = Subset(train_dataset, indices=range(1000))
+    # train_dataset = Subset(train_dataset, indices=range(1000))
 
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=cfg.batch_size//cfg.num_gpu,
         pin_memory=True, shuffle=True, num_workers=int(4), drop_last=True)

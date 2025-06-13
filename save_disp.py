@@ -7,7 +7,7 @@ import torch
 from tqdm import tqdm
 from pathlib import Path
 from models.models.stereoplus.stereoplus_aanet import StereoNet
-from models.models.stereonet.TinyHITNet_stereonet import StereoNet
+# from models.models.stereonet.TinyHITNet_stereonet import StereoNet
 from core.utils.utils import InputPadder
 from PIL import Image
 from matplotlib import pyplot as plt
@@ -140,7 +140,7 @@ def demo(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--restore_ckpt', help="restore checkpoint", default="kitti_2012/final.pth")
+    parser.add_argument('--restore_ckpt', help="restore checkpoint", default="kitti_2012/stereoplus_aanet.pth")
 
     parser.add_argument('--save_numpy', action='store_true', help='save output as numpy arrays')
     parser.add_argument('-l', '--left_imgs', help="path to all first (left) frames", default="./data/222/im0.png")

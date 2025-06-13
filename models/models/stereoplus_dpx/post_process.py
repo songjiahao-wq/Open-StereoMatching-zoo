@@ -48,17 +48,17 @@ class StereoNetPostProcessPlus(nn.Module):
         )
 
         disp_1 = (spg * disp_1).sum(1)
-        disp_1 = disp_1.squeeze(1) * self.maxdisp
+        disp_1 = disp_1 * self.maxdisp
 
         if self.training:
             disp_low = F.interpolate(
                 disp_low, size=gt_disps.shape[1:], mode="bilinear"
             )
 
-            disp_low = disp_low.squeeze(1) * self.maxdisp
+            disp_low = disp_low * self.maxdisp
             return [disp_low, disp_1]
         else:
-            return disp_1.squeeze(1)
+            return disp_1
 if __name__ == "__main__":
     # Example usage
     torch.manual_seed(0)
