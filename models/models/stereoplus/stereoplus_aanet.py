@@ -273,7 +273,7 @@ class StereoNet(nn.Module):
 
         # 4. 进入 2D aggregation 模块（CostAggregation2D）
         cost_volume = self.cost_filter_aanetori(cost_volume)
-        cost_volume = self.cost_filter_aanet(cost_volume)
+        # cost_volume = self.cost_filter_aanet(cost_volume)
 
         # 5. softmax + 视差回归
         prob_volume = F.softmax(cost_volume, dim=1)

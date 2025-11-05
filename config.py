@@ -153,7 +153,7 @@ class CameraIntrinsics:
         height = 480
         width = 640
 
-        left_k, right_k, left_distortion, right_distortion, r, t, q = self.read_calib(r"D:\BaiduSyncdisk\work\Stereo\ONNX-Stereo-Project-zoo\calibration\calib-circle640x480.json")
+        left_k, right_k, left_distortion, right_distortion, r, t, q = self.read_calib(r"D:\project2024\stereo matching\ONNX-Stereo-Project-zoo\calibration\calib-circle164_640x480.json")
         r1, r2, p1, p2, q, roi1, roi2 = cv2.stereoRectify(left_k, left_distortion, right_k, right_distortion,
                                                           (width, height), r, t, alpha=0)
         fx, fy, cx, cy = p1[0, 0], p1[1, 1], p1[0, 2], p1[1, 2]
@@ -187,7 +187,7 @@ class CameraIntrinsics:
 
 class Stereo:
     def __init__(self, resolution=(640, 480)):
-        ori_height, ori_width, p, baseline, q, self.map1x, self.map1y, self.map2x, self.map2y = CameraIntrinsics().getIntrinsics_AI155()
+        ori_height, ori_width, p, baseline, q, self.map1x, self.map1y, self.map2x, self.map2y = CameraIntrinsics().getIntrinsics_AI640()
         self.fx, self.fy, self.cx, self.cy, self.baseline = p[0], p[5], p[2], p[6], baseline * 1000
         self.Q = q
         self.depth_cam_matrix = np.array([[self.fx, 0, self.cx],
