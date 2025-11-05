@@ -84,7 +84,7 @@ def writePFM(file, array):
 
 def writeFlow(filename,uv,v=None):
     """ Write optical flow to file.
-    
+
     If v is None, uv is assumed to contain both u and v channels,
     stacked in depth.
     Original code by Deqing Sun, adapted from Daniel Scharstein.
@@ -151,7 +151,7 @@ def readDispVKITTI2(filename):
     depth = cv2.imread(filename, cv2.IMREAD_ANYCOLOR | cv2.IMREAD_ANYDEPTH)
     depth = (depth / 100).astype(np.float32)
     valid = (depth > 0) & (depth < 655)
-    
+
     focal_length = 725.0087
     baseline = 0.532725
     disp = baseline * focal_length / depth
@@ -218,14 +218,14 @@ def readDispMiddlebury(file_name):
         disp = readPFM(file_name).astype(np.float32)
         assert len(disp.shape) == 2
         valid = disp > 0.0
-        return disp, valid    
+        return disp, valid
 
 def writeFlowKITTI(filename, uv):
     uv = 64.0 * uv + 2**15
     valid = np.ones([uv.shape[0], uv.shape[1], 1])
     uv = np.concatenate([uv, valid], axis=-1).astype(np.uint16)
     cv2.imwrite(filename, uv[..., ::-1])
-    
+
 
 def read_gen(file_name, pil=False):
     ext = splitext(file_name)[-1]
@@ -242,3 +242,31 @@ def read_gen(file_name, pil=False):
         else:
             return flow[:, :, :-1]
     return []
+
+
+def read_gen_new(file_name):
+    ext = splitext(file_name)[-1].lower()
+
+    if ext in ['.png', '.jpg', '.jpeg', '.ppm']:
+        # 使用 cv2 更快且线程安全
+        img = cv2.imread(file_name, cv2.IMREAD_UNCHANGED)
+        if img is None:
+            raise IOError(f"Failed to read image file: {file_name}")
+        # cv2 默认是 BGR，我们统一为 RGB
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        return img
+
+    elif ext in ['.bin', '.raw']:
+        return np.load(file_name)
+
+    elif ext == '.flo':
+        return readFlow(file_name).astype(np.float32)
+
+    elif ext == '.pfm':
+        flow = readPFM(file_name).astype(np.float32)
+        if len(flow.shape) == 2:
+            return flow
+        else:
+            return flow[:, :, :-1]
+
+    raise ValueError(f"Unsupported file extension: {ext}")
