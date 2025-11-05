@@ -13,10 +13,24 @@ from glob import glob
 import os.path as osp
 
 import sys
+
 sys.path.append(os.getcwd())
 
 from core.utils import frame_utils
 from core.utils.augmentor import FlowAugmentor, SparseFlowAugmentor
+from torch.utils.data import Dataset
+
+
+class RepeatedDataset(Dataset):
+    def __init__(self, dataset, repeat):
+        self.dataset = dataset
+        self.repeat = repeat
+
+    def __len__(self):
+        return len(self.dataset) * self.repeat
+
+    def __getitem__(self, idx):
+        return self.dataset[idx % len(self.dataset)]
 
 
 class StereoDataset(data.Dataset):
@@ -33,7 +47,7 @@ class StereoDataset(data.Dataset):
         if reader is None:
             self.disparity_reader = frame_utils.read_gen
         else:
-            self.disparity_reader = reader        
+            self.disparity_reader = reader
 
         self.is_test = False
         self.init_seed = False
@@ -63,7 +77,7 @@ class StereoDataset(data.Dataset):
 
         index = index % len(self.image_list)
         disp = self.disparity_reader(self.disparity_list[index])
-        
+
         if isinstance(disp, tuple):
             disp, valid = disp
         else:
@@ -81,8 +95,8 @@ class StereoDataset(data.Dataset):
 
         # grayscale images
         if len(img1.shape) == 2:
-            img1 = np.tile(img1[...,None], (1, 1, 3))
-            img2 = np.tile(img2[...,None], (1, 1, 3))
+            img1 = np.tile(img1[..., None], (1, 1, 3))
+            img2 = np.tile(img2[..., None], (1, 1, 3))
         else:
             img1 = img1[..., :3]
             img2 = img2[..., :3]
@@ -104,14 +118,12 @@ class StereoDataset(data.Dataset):
             valid = (flow[0].abs() < 512) & (flow[1].abs() < 512)
 
         if self.img_pad is not None:
-
             padH, padW = self.img_pad
-            img1 = F.pad(img1, [padW]*2 + [padH]*2)
-            img2 = F.pad(img2, [padW]*2 + [padH]*2)
+            img1 = F.pad(img1, [padW] * 2 + [padH] * 2)
+            img2 = F.pad(img2, [padW] * 2 + [padH] * 2)
 
         flow = flow[:1]
         return self.image_list[index] + [self.disparity_list[index]], img1, img2, flow, valid.float()
-
 
     def __mul__(self, v):
         copy_of_self = copy.deepcopy(self)
@@ -120,7 +132,7 @@ class StereoDataset(data.Dataset):
         copy_of_self.disparity_list = v * copy_of_self.disparity_list
         copy_of_self.extra_info = v * copy_of_self.extra_info
         return copy_of_self
-        
+
     def __len__(self):
         return len(self.image_list)
 
@@ -171,7 +183,6 @@ class SceneFlowDatasets(StereoDataset):
             self.image_list += [[img1, img2]]
             self.disparity_list += [disp]
         logging.info(f"Added {len(self.disparity_list) - original_length} from Monkaa {self.dstype}")
-
 
     def _add_driving(self, split="TRAIN"):
         """ Add FlyingThings3D data """
@@ -235,8 +246,9 @@ class FallingThings(StereoDataset):
         assert len(image1_list) == len(image2_list) == len(disp_list)
 
         for img1, img2, disp in zip(image1_list, image2_list, disp_list):
-            self.image_list += [ [img1, img2] ]
-            self.disparity_list += [ disp ]
+            self.image_list += [[img1, img2]]
+            self.disparity_list += [disp]
+
 
 class TartanAir(StereoDataset):
     def __init__(self, aug_params=None, root='datasets', keywords=[]):
@@ -250,11 +262,13 @@ class TartanAir(StereoDataset):
 
         image1_list = [osp.join(root, e) for e in filenames]
         image2_list = [osp.join(root, e.replace('_left', '_right')) for e in filenames]
-        disp_list = [osp.join(root, e.replace('image_left', 'depth_left').replace('left.png', 'left_depth.npy')) for e in filenames]
+        disp_list = [osp.join(root, e.replace('image_left', 'depth_left').replace('left.png', 'left_depth.npy')) for e
+                     in filenames]
 
         for img1, img2, disp in zip(image1_list, image2_list, disp_list):
-            self.image_list += [ [img1, img2] ]
-            self.disparity_list += [ disp ]
+            self.image_list += [[img1, img2]]
+            self.disparity_list += [disp]
+
 
 class KITTI(StereoDataset):
     def __init__(self, aug_params=None, root='/data2/cjd/StereoDatasets/kitti/2015', image_set='training'):
@@ -264,16 +278,19 @@ class KITTI(StereoDataset):
         root_12 = '/data2/cjd/StereoDatasets/kitti/2012/'
         image1_list = sorted(glob(os.path.join(root_12, image_set, 'colored_0/*_10.png')))
         image2_list = sorted(glob(os.path.join(root_12, image_set, 'colored_1/*_10.png')))
-        disp_list = sorted(glob(os.path.join(root_12, 'training', 'disp_occ/*_10.png'))) if image_set == 'training' else [osp.join(root, 'training/disp_occ/000085_10.png')]*len(image1_list)
+        disp_list = sorted(glob(os.path.join(root_12, 'training', 'disp_occ/*_10.png'))) if image_set == 'training' else [
+                                                                                                                             osp.join(root, 'training/disp_occ/000085_10.png')] * len(image1_list)
 
         root_15 = '/data2/cjd/StereoDatasets/kitti/2015/'
         image1_list += sorted(glob(os.path.join(root_15, image_set, 'image_2/*_10.png')))
         image2_list += sorted(glob(os.path.join(root_15, image_set, 'image_3/*_10.png')))
-        disp_list += sorted(glob(os.path.join(root_15, 'training', 'disp_occ_0/*_10.png'))) if image_set == 'training' else [osp.join(root, 'training/disp_occ_0/000085_10.png')]*len(image1_list)
+        disp_list += sorted(glob(os.path.join(root_15, 'training', 'disp_occ_0/*_10.png'))) if image_set == 'training' else [
+                                                                                                                                osp.join(root, 'training/disp_occ_0/000085_10.png')] * len(image1_list)
 
         for idx, (img1, img2, disp) in enumerate(zip(image1_list, image2_list, disp_list)):
-            self.image_list += [ [img1, img2] ]
-            self.disparity_list += [ disp ]
+            self.image_list += [[img1, img2]]
+            self.disparity_list += [disp]
+
 
 class VKITTI2(StereoDataset):
     def __init__(self, aug_params=None, root='/data/cjd/stereo_dataset/vkitti2/'):
@@ -287,11 +304,12 @@ class VKITTI2(StereoDataset):
         assert len(image1_list) == len(image2_list) == len(disp_list)
 
         for idx, (img1, img2, disp) in enumerate(zip(image1_list, image2_list, disp_list)):
-            self.image_list += [ [img1, img2] ]
-            self.disparity_list += [ disp ]
+            self.image_list += [[img1, img2]]
+            self.disparity_list += [disp]
+
 
 class Middlebury(StereoDataset):
-    def __init__(self, aug_params=None, root='/data2/cjd/StereoDatasets/middlebury', split='2014', resolution='F'):
+    def __init__(self, aug_params=None, root='/home/mm/sjh/DATA/middlebury', split='2014', resolution='F'):
         super(Middlebury, self).__init__(aug_params, sparse=True, reader=frame_utils.readDispMiddlebury)
         assert os.path.exists(root)
         assert split in ["2005", "2006", "2014", "2021", "MiddEval3"]
@@ -299,26 +317,28 @@ class Middlebury(StereoDataset):
             scenes = list((Path(root) / "2005").glob("*"))
             for scene in scenes:
                 self.image_list += [[str(scene / "view1.png"), str(scene / "view5.png")]]
-                self.disparity_list += [str(scene / "disp1.png")]    
+                self.disparity_list += [str(scene / "disp1.png")]
                 for illum in ["1", "2", "3"]:
-                    for exp in ["0", "1", "2"]:       
-                        self.image_list += [[str(scene / f"Illum{illum}/Exp{exp}/view1.png"), str(scene / f"Illum{illum}/Exp{exp}/view5.png")]]
-                        self.disparity_list += [str(scene / "disp1.png")]        
+                    for exp in ["0", "1", "2"]:
+                        self.image_list += [[str(scene / f"Illum{illum}/Exp{exp}/view1.png"),
+                                             str(scene / f"Illum{illum}/Exp{exp}/view5.png")]]
+                        self.disparity_list += [str(scene / "disp1.png")]
         elif split == "2006":
             scenes = list((Path(root) / "2006").glob("*"))
             for scene in scenes:
                 self.image_list += [[str(scene / "view1.png"), str(scene / "view5.png")]]
-                self.disparity_list += [str(scene / "disp1.png")]    
+                self.disparity_list += [str(scene / "disp1.png")]
                 for illum in ["1", "2", "3"]:
-                    for exp in ["0", "1", "2"]:       
-                        self.image_list += [[str(scene / f"Illum{illum}/Exp{exp}/view1.png"), str(scene / f"Illum{illum}/Exp{exp}/view5.png")]]
+                    for exp in ["0", "1", "2"]:
+                        self.image_list += [[str(scene / f"Illum{illum}/Exp{exp}/view1.png"),
+                                             str(scene / f"Illum{illum}/Exp{exp}/view5.png")]]
                         self.disparity_list += [str(scene / "disp1.png")]
         elif split == "2014":
             scenes = list((Path(root) / "2014").glob("*"))
             for scene in scenes:
                 for s in ["E", "L", ""]:
-                    self.image_list += [ [str(scene / "im0.png"), str(scene / f"im1{s}.png")] ]
-                    self.disparity_list += [ str(scene / "disp0.pfm") ]
+                    self.image_list += [[str(scene / "im0.png"), str(scene / f"im1{s}.png")]]
+                    self.disparity_list += [str(scene / "disp0.pfm")]
         elif split == "2021":
             scenes = list((Path(root) / "2021/data").glob("*"))
             for scene in scenes:
@@ -326,7 +346,8 @@ class Middlebury(StereoDataset):
                 self.disparity_list += [str(scene / "disp0.pfm")]
                 for s in ["0", "1", "2", "3"]:
                     if os.path.exists(str(scene / f"ambient/L0/im0e{s}.png")):
-                        self.image_list += [[str(scene / f"ambient/L0/im0e{s}.png"), str(scene / f"ambient/L0/im1e{s}.png")]]
+                        self.image_list += [
+                            [str(scene / f"ambient/L0/im0e{s}.png"), str(scene / f"ambient/L0/im1e{s}.png")]]
                         self.disparity_list += [str(scene / "disp0.pfm")]
         else:
             image1_list = sorted(glob(os.path.join(root, "MiddEval3", f'training{resolution}', '*/im0.png')))
@@ -334,8 +355,9 @@ class Middlebury(StereoDataset):
             disp_list = sorted(glob(os.path.join(root, "MiddEval3", f'training{resolution}', '*/disp0GT.pfm')))
             assert len(image1_list) == len(image2_list) == len(disp_list) > 0, [image1_list, split]
             for img1, img2, disp in zip(image1_list, image2_list, disp_list):
-                self.image_list += [ [img1, img2] ]
-                self.disparity_list += [ disp ]
+                self.image_list += [[img1, img2]]
+                self.disparity_list += [disp]
+
 
 class CREStereoDataset(StereoDataset):
     def __init__(self, aug_params=None, root='/data2/cjd/StereoDatasets/crestereo'):
@@ -349,8 +371,9 @@ class CREStereoDataset(StereoDataset):
         assert len(image1_list) == len(image2_list) == len(disp_list)
 
         for idx, (img1, img2, disp) in enumerate(zip(image1_list, image2_list, disp_list)):
-            self.image_list += [ [img1, img2] ]
-            self.disparity_list += [ disp ]
+            self.image_list += [[img1, img2]]
+            self.disparity_list += [disp]
+
 
 class InStereo2K(StereoDataset):
     def __init__(self, aug_params=None, root='/data2/cjd/data_wxq/instereo2k'):
@@ -364,8 +387,9 @@ class InStereo2K(StereoDataset):
         assert len(image1_list) == len(image2_list) == len(disp_list)
 
         for idx, (img1, img2, disp) in enumerate(zip(image1_list, image2_list, disp_list)):
-            self.image_list += [ [img1, img2] ]
-            self.disparity_list += [ disp ]
+            self.image_list += [[img1, img2]]
+            self.disparity_list += [disp]
+
 
 class CARLA(StereoDataset):
     def __init__(self, aug_params=None, root='/data2/cjd/StereoDatasets/carla-highres'):
@@ -379,8 +403,9 @@ class CARLA(StereoDataset):
         assert len(image1_list) == len(image2_list) == len(disp_list)
 
         for idx, (img1, img2, disp) in enumerate(zip(image1_list, image2_list, disp_list)):
-            self.image_list += [ [img1, img2] ]
-            self.disparity_list += [ disp ]
+            self.image_list += [[img1, img2]]
+            self.disparity_list += [disp]
+
 
 class DrivingStereo(StereoDataset):
     def __init__(self, aug_params=None, root='/data2/cjd/StereoDatasets/drivingstereo/', image_set='rainy'):
@@ -392,21 +417,21 @@ class DrivingStereo(StereoDataset):
         disp_list = sorted(glob(os.path.join(root, image_set, 'disparity-map-half-size/*.png')))
 
         for idx, (img1, img2, disp) in enumerate(zip(image1_list, image2_list, disp_list)):
-            self.image_list += [ [img1, img2] ]
-            self.disparity_list += [ disp ]
+            self.image_list += [[img1, img2]]
+            self.disparity_list += [disp]
 
-  
+
 def fetch_dataloader(args):
     """ Create the data loader for the corresponding trainign set """
     # print('args.img_gamma', args.img_gamma)
-    aug_params = {'crop_size': list(args.image_size), 'min_scale': args.spatial_scale[0], 'max_scale': args.spatial_scale[1], 'do_flip': False, 'yjitter': not args.noyjitter}
+    aug_params = {'crop_size': list(args.image_size), 'min_scale': args.spatial_scale[0],
+                  'max_scale': args.spatial_scale[1], 'do_flip': False, 'yjitter': not args.noyjitter}
     if hasattr(args, "saturation_range") and args.saturation_range is not None:
         aug_params["saturation_range"] = list(args.saturation_range)
     if hasattr(args, "img_gamma") and args.img_gamma is not None:
         aug_params["gamma"] = args.img_gamma
     if hasattr(args, "do_flip") and args.do_flip is not None:
         aug_params["do_flip"] = args.do_flip
-
 
     train_dataset = None
     print('train_datasets', args.train_datasets)
@@ -418,17 +443,17 @@ def fetch_dataloader(args):
             new_dataset = KITTI(aug_params)
             logging.info(f"Adding {len(new_dataset)} samples from KITTI")
         elif dataset_name == 'sintel_stereo':
-            new_dataset = SintelStereo(aug_params)*140
+            new_dataset = SintelStereo(aug_params) * 140
             logging.info(f"Adding {len(new_dataset)} samples from Sintel Stereo")
         elif dataset_name == 'falling_things':
-            new_dataset = FallingThings(aug_params)*5
+            new_dataset = FallingThings(aug_params) * 5
             logging.info(f"Adding {len(new_dataset)} samples from FallingThings")
         elif dataset_name.startswith('tartan_air'):
             new_dataset = TartanAir(aug_params, keywords=dataset_name.split('_')[2:])
             logging.info(f"Adding {len(new_dataset)} samples from Tartain Air")
         elif dataset_name == 'eth3d_finetune':
             crestereo = CREStereoDataset(aug_params)
-            logging.info(f"Adding {len(crestereo)} samples from CREStereo Dataset")            
+            logging.info(f"Adding {len(crestereo)} samples from CREStereo Dataset")
             eth3d = ETH3D(aug_params)
             logging.info(f"Adding {len(eth3d)} samples from ETH3D")
             instereo2k = InStereo2K(aug_params)
@@ -445,7 +470,7 @@ def fetch_dataloader(args):
             carla = CARLA(aug_params)
             logging.info(f"Adding {len(carla)} samples from CARLA")
             crestereo = CREStereoDataset(aug_params)
-            logging.info(f"Adding {len(crestereo)} samples from CREStereo Dataset")             
+            logging.info(f"Adding {len(crestereo)} samples from CREStereo Dataset")
             instereo2k = InStereo2K(aug_params)
             logging.info(f"Adding {len(instereo2k)} samples from InStereo2K")
             mb2005 = Middlebury(aug_params, split='2005')
@@ -474,10 +499,31 @@ def fetch_dataloader(args):
             mbeval3 = Middlebury(aug_params, split='MiddEval3', resolution='H')
             logging.info(f"Adding {len(mbeval3)} samples from Middlebury Eval3")
             new_dataset = sceneflow + mb2005 * 200 + mb2006 * 200 + mb2014 * 200 + mb2021 * 200 + mbeval3 * 200
-            logging.info(f"Adding {len(new_dataset)} samples from Middlebury Mixture Dataset")
+            logging.info(f"Adding {len(new_dataset)} samples from SceneFlow + Middlebury Mixture Dataset")
+        elif dataset_name == 'sceneflow_middlebury_train2':
+            sceneflow = SceneFlowDatasets(aug_params, dstype='frames_finalpass')
+            logging.info(f"Adding {len(sceneflow)} samples from SceneFlow")
+
+            mb2005 = RepeatedDataset(Middlebury(aug_params, split='2005'), repeat=200)
+            logging.info(f"Adding {len(mb2005)} samples from Middlebury 2005 (repeated x200)")
+
+            mb2006 = RepeatedDataset(Middlebury(aug_params, split='2006'), repeat=200)
+            logging.info(f"Adding {len(mb2006)} samples from Middlebury 2006 (repeated x200)")
+
+            mb2014 = RepeatedDataset(Middlebury(aug_params, split='2014'), repeat=200)
+            logging.info(f"Adding {len(mb2014)} samples from Middlebury 2014 (repeated x200)")
+
+            mb2021 = RepeatedDataset(Middlebury(aug_params, split='2021'), repeat=200)
+            logging.info(f"Adding {len(mb2021)} samples from Middlebury 2021 (repeated x200)")
+
+            mbeval3 = RepeatedDataset(Middlebury(aug_params, split='MiddEval3', resolution='H'), repeat=200)
+            logging.info(f"Adding {len(mbeval3)} samples from Middlebury Eval3 (repeated x200)")
+
+            new_dataset = sceneflow + mb2005 + mb2006 + mb2014 + mb2021 + mbeval3
+            logging.info(f"Final mixed dataset size: {len(new_dataset)}")
         elif dataset_name == 'middlebury_finetune':
             crestereo = CREStereoDataset(aug_params)
-            logging.info(f"Adding {len(crestereo)} samples from CREStereo Dataset")                 
+            logging.info(f"Adding {len(crestereo)} samples from CREStereo Dataset")
             instereo2k = InStereo2K(aug_params)
             logging.info(f"Adding {len(instereo2k)} samples from InStereo2K")
             carla = CARLA(aug_params)
@@ -534,6 +580,8 @@ if __name__ == '__main__':
         disp_np = (disp_np * scale).astype(np.uint8)
         disp_color = cv2.applyColorMap(disp_np, COLORMAP)
         return disp_color
+
+
     # plot_dir = './temp/plots'
     # if not os.path.exists(plot_dir):
     #     os.makedirs(plot_dir)
@@ -546,6 +594,7 @@ if __name__ == '__main__':
             x = np.zeros_like(x)
         return (x * 255).astype(np.uint8)
 
+
     dataset = SceneFlowDatasets()
     for i in range(5):
         _, *data_blob = dataset[i]
@@ -555,8 +604,6 @@ if __name__ == '__main__':
         cv2.imshow('image1', cv2.cvtColor(image1, cv2.COLOR_BGR2RGB))
         cv2.imshow('image2', cv2.cvtColor(image2, cv2.COLOR_RGB2BGR))
         cv2.waitKey(0)
-        
-
 
         image1_np = image1[0].squeeze().cpu().numpy()
         image1_np = (image1_np - image1_np.min()) / (image1_np.max() - image1_np.min()) * 255.0
@@ -569,7 +616,7 @@ if __name__ == '__main__':
         image1 = normalize_to_uint8(image1[0].permute(1, 2, 0).cpu().numpy()[:, :, ::-1])
         # cv2.imwrite(os.path.join(plot_dir, f'{i}_img1.png'), image1)
         image2 = normalize_to_uint8(image2[0].permute(1, 2, 0).cpu().numpy())
-        
+
         print(image1.shape, image2.shape, disp_gt_np.shape)
         # plt可视化三个图像
         plt.figure()
