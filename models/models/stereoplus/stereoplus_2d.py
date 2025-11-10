@@ -223,8 +223,8 @@ class StereoNet(nn.Module):
 if __name__ == "__main__":
     from thop import profile
 
-    left = torch.rand(1, 3, 544, 960)
-    right = torch.rand(1, 3, 544, 960)
+    left = torch.rand(1, 3, 480, 640)
+    right = torch.rand(1, 3, 480, 640)
     model = StereoNet(cfg=None)
     model.eval()
     print(model(left, right).size())

@@ -225,9 +225,9 @@ class StereoNet(nn.Module):
 if __name__ == "__main__":
     from thop import profile
 
-    left = torch.rand(8, 3, 320, 736)
-    right = torch.rand(8, 3, 320, 736)
-    gt_disp = torch.rand(8, 320, 736)
+    left = torch.rand(1, 3, 480, 640)
+    right = torch.rand(1, 3, 480, 640)
+    gt_disp = torch.rand(1, 480, 640)
     model = StereoNet(cfg=None)
     model.eval()
     # model.train()
@@ -235,7 +235,7 @@ if __name__ == "__main__":
         print(model(left, right, gt_disp)['disp_low'].size(), model(left, right, gt_disp)['disp_1'].size())
     else:
         print(model(left, right).size())
-    # model.fuse(model)  # 调用融合Conv+BN，替换权重和forward
+    model.fuse(model)  # 调用融合Conv+BN，替换权重和forward
     # total_ops, total_params = profile(
     #     model,
     #     (
@@ -249,12 +249,12 @@ if __name__ == "__main__":
     #     )
     # )
 
-    # torch.onnx.export(
-    #     model,
-    #     (left, right),
-    #     "stereoplus_aanet.onnx",
-    #     opset_version=16,  # ONNX opset 版本
-    #     input_names=["left", "right"],  # 输入名称
-    #     output_names=["output"],  # 输出名称
-    #     dynamic_axes=None,
-    # )
+    torch.onnx.export(
+        model,
+        (left, right),
+        "stereoplus_aanet.onnx",
+        opset_version=16,  # ONNX opset 版本
+        input_names=["left", "right"],  # 输入名称
+        output_names=["output"],  # 输出名称
+        dynamic_axes=None,
+    )

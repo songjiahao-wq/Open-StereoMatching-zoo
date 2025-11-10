@@ -149,7 +149,7 @@ class StereoNet(nn.Module):
         rf = self.feature_extractor(right_img)
 
         # (1,32,24,68,120)
-        # cost_volume = make_cost_volume(lf, rf, self.max_disp)
+        cost_volume = make_cost_volume(lf, rf, self.max_disp)
         # cost_volume = make_gwc_volume(lf, rf, self.max_disp, num_groups=8)
         cost_volume = correlation_volume(lf, rf, self.max_disp)
         cost_volume = self.cost_filter(cost_volume).squeeze(1)
