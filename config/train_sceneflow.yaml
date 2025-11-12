@@ -4,14 +4,15 @@ restore_ckpt: None
 logdir: './checkpoints/sceneflow/'
 encoder: 'vitl'
 batch_size: 12
-train_datasets: ['sceneflow']
+train_datasets: ['sceneflow_middlebury_train'] # sceneflow_middlebury_train, sceneflow
 lr: 2e-4
 wdecay: 1e-5
 total_step: 200000
 save_frequency: 5000
 save_path: ./checkpoints/sceneflow/
 val_frequency: 5000
-image_size: [320, 736]
+# image_size: [320, 736]
+image_size: [480, 640]
 train_iters: 22
 valid_iters: 32
 val_dataset: 'kitti'
