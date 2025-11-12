@@ -114,8 +114,8 @@ class StereoNet(nn.Module):
         self.conv1 = nn.Sequential(conv_3x3(3, 32, 2), ResBlock(32))  # 1/2
         self.conv2 = nn.Sequential(conv_3x3(32, 32, 2), ResBlock(32))  # 1/4
         self.conv3 = nn.Sequential(conv_3x3(32, 32, 2), ResBlock(32))  # 1/8
-        # self.conv4 = nn.Sequential(conv_3x3(32, 32, 2), ResBlock(32))  # 1/16
-        # self.conv5 = nn.Sequential(conv_3x3(32, 32, 2), ResBlock(32))  # 1/32
+        self.conv4 = nn.Sequential(conv_3x3(32, 32, 2), ResBlock(32))  # 1/16
+        self.conv5 = nn.Sequential(conv_3x3(32, 32, 2), ResBlock(32))  # 1/32
         self.last_conv = nn.Conv2d(32, 32, 3, 1, 1)
         self.cost_filter = nn.Sequential(
             nn.Conv2d(32, 32, 3, 1, 1),
@@ -143,16 +143,16 @@ class StereoNet(nn.Module):
         feat1 = self.conv1(x)        # 1/2 scale
         feat2 = self.conv2(feat1)    # 1/4 scale
         feat3 = self.conv3(feat2)    # 1/8 scale
-        # feat4 = self.conv4(feat3)    # 1/16 scale
-        # feat5 = self.conv5(feat4)    # 1/32 scale
-        feat5 = self.last_conv(feat3)
+        feat4 = self.conv4(feat3)    # 1/16 scale
+        feat5 = self.conv5(feat4)    # 1/32 scale
+        feat5 = self.last_conv(feat5)
         
         return {
             "s2": feat1,
             "s4": feat2,
             "s8": feat3,
-            # "s16": feat4,
-            # "s32": feat5,
+            "s16": feat4,
+            "s32": feat5,
             "out": feat5  # Main output for backward compatibility
         }
     def compute_cost_volume(self, lf, rf, max_disp):
